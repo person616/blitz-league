@@ -509,7 +509,8 @@ function App() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("soccer-baseboard-save");
+      const saved = window.localStorage.getItem("blitz-league-save")
+        ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
         const data = JSON.parse(saved) as { xp?: number; coins?: number; unlockedPlayers?: string[]; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; enterEndsTurn?: boolean };
         if (typeof data.xp === "number") {
@@ -533,7 +534,7 @@ function App() {
 
   useEffect(() => {
     if (!saveReady) return;
-    window.localStorage.setItem("soccer-baseboard-save", JSON.stringify({ xp, coins, unlockedPlayers, activeFormat, level, captionsEnabled, captionSize, enterEndsTurn }));
+    window.localStorage.setItem("blitz-league-save", JSON.stringify({ xp, coins, unlockedPlayers, activeFormat, level, captionsEnabled, captionSize, enterEndsTurn }));
   }, [xp, coins, unlockedPlayers, activeFormat, level, captionsEnabled, captionSize, enterEndsTurn, saveReady]);
 
   useEffect(() => {
@@ -1329,7 +1330,7 @@ function App() {
         @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
       `}</style>
       <header className="topbar">
-        <div className="brand"><div className="brand-mark">⚽</div><div>SOCCER BASEBOARD<small>TACTICAL PITCH · SEASON 01</small></div></div>
+        <div className="brand"><div className="brand-mark">⚽</div><div>BLITZ LEAGUE<small>TACTICAL PITCH · SEASON 01</small></div></div>
         <nav className="nav">
           <button className={screen === "home" ? "active" : ""} onClick={() => { stopQuickplay(); setScreen("home"); }}>DASHBOARD</button>
           <button className={screen === "campaign" ? "active" : ""} onClick={() => { stopQuickplay(); setScreen("campaign"); }}>CAMPAIGN</button>
@@ -1397,7 +1398,7 @@ function App() {
       {screen === "settings" && <div className="content settings-page">
         <div className="eyebrow">Game preferences</div>
         <h1>Settings</h1>
-        <p className="subtitle">Adjust how Soccer Baseboard presents gameplay. Your choices are saved on this device.</p>
+        <p className="subtitle">Adjust how Blitz League presents gameplay. Your choices are saved on this device.</p>
         <section className="settings-card">
           <div className="panel-heading"><h2>Gameplay captions</h2><span>Accessibility</span></div>
           <div className="setting-row">

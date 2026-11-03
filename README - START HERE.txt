@@ -1,6 +1,6 @@
-SOCCER BASEBOARD
+BLITZ LEAGUE
 
-To play: double-click "! PLAY SOCCER BASEBOARD.bat".
+To play: double-click "! PLAY BLITZ LEAGUE.bat".
 The launcher opens the game in your browser. Leave its terminal window open
 while you play.
 

@@ -1,8 +1,8 @@
-# Soccer Baseboard
+# Blitz League
 
-**Play the game:** [https://person616.github.io/soccer-baseboard/](https://person616.github.io/soccer-baseboard/)
+**Play the game:** [https://person616.github.io/blitz-league/](https://person616.github.io/blitz-league/)
 
-Soccer Baseboard is a turn-based soccer tactics game featuring MLS-inspired players, campaign matches, quickplay, and a season pass.
+Blitz League is a turn-based soccer tactics game featuring MLS-inspired players, campaign matches, quickplay, and a season pass.
 
 ## Run locally
 

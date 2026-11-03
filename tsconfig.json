@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "soccer baseboard.tsx", "vite.config.ts"]
+  "include": ["src", "blitz league.tsx", "vite.config.ts"]
 }

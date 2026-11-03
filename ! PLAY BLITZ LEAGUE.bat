@@ -1,8 +1,8 @@
 @echo off
-title Soccer Baseboard
+title Blitz League
 cd /d "%~dp0"
 if not exist node_modules\@supabase\supabase-js (
-  echo Installing Soccer Baseboard dependencies...
+  echo Installing Blitz League dependencies...
   call npm install
   if errorlevel 1 goto failed
 )
@@ -12,7 +12,7 @@ goto end
 
 :failed
 echo.
-echo Soccer Baseboard could not start. Make sure Node.js is installed.
+echo Blitz League could not start. Make sure Node.js is installed.
 pause
 
 :end

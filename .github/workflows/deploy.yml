@@ -1,4 +1,4 @@
-name: Deploy Soccer Baseboard
+name: Deploy Blitz League
 
 on:
   push:

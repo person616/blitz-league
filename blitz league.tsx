@@ -8,6 +8,7 @@ type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmakin
 type FormatId = "classic" | "small-sided" | "golden-goal";
 type CaptionSize = "small" | "medium" | "large";
 type KitColor = { id: string; name: string; value: string };
+type CrateReveal = { crate: "basic" | "blitz" | "thanksgiving"; color: KitColor; reward: string; bonusCoins: number };
 type Player = {
   id: string;
   name: string;
@@ -233,6 +234,7 @@ const kitColors: KitColor[] = [
   { id: "charcoal", name: "Charcoal", value: "#525e58" },
 ];
 const dailyOfferPlayers = roster.filter((player) => overallRating(player) >= 82);
+const meanPlayerStats = (player: Player) => Math.round((player.rating + player.abilityStat) / 2);
 const dailyOfferPrice = (player: Player) => 180 + Math.max(0, overallRating(player) - 82) * 28;
 const dailyPlayerOffers = (date: Date) => {
   const dayKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
@@ -652,6 +654,8 @@ function App() {
   const [awayKitColorId, setAwayKitColorId] = useState("coral");
   const [dailyOfferPurchases, setDailyOfferPurchases] = useState<Record<string, boolean>>({});
   const [storeNow, setStoreNow] = useState(() => Date.now());
+  const [crateReveal, setCrateReveal] = useState<CrateReveal | null>(null);
+  const [crateRevealed, setCrateRevealed] = useState(false);
   const [customPositions, setCustomPositions] = useState<Partial<Record<string, Position>>>({});
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
@@ -798,9 +802,15 @@ function App() {
     }
     const bonusLabel = playerReward
       ? `${playerReward.name} (${overallRating(playerReward)} OVR)`
-      : formatReward?.name ?? "75 coins";
+      : formatReward?.name ?? "75 bonus coins";
     if (!playerReward && !formatReward) setCoins((current) => current + 75);
-    setNotice(`Crate opened: ${colorReward?.name ?? "team color"} + ${bonusLabel}${duplicateColor ? " · duplicate color converted to 25 coins" : ""}.`);
+    setCrateRevealed(false);
+    setCrateReveal({
+      crate,
+      color: colorReward ?? kitColors[0],
+      reward: bonusLabel,
+      bonusCoins,
+    });
   };
 
   useEffect(() => {
@@ -875,6 +885,12 @@ function App() {
     const timer = window.setInterval(() => setStoreNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [screen]);
+
+  useEffect(() => {
+    if (!crateReveal || crateRevealed) return;
+    const timer = window.setTimeout(() => setCrateRevealed(true), 1250);
+    return () => window.clearTimeout(timer);
+  }, [crateReveal, crateRevealed]);
 
   useEffect(() => {
     latestMatch.current = match;
@@ -1693,6 +1709,14 @@ function App() {
         .kit-preview{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;border:1px solid #ffffff55;vertical-align:middle;margin-right:8px}
         .kit-warning{background:#46251f;border:1px solid #e8775d88;border-radius:9px;padding:12px 14px;color:#ffb19a;font-size:11px;line-height:1.55;margin:12px 0}
         .store-notice{background:#1c2820;border:1px solid #b8f36b33;border-radius:10px;padding:12px 14px;color:#cbd8cb;font-size:11px;line-height:1.6;margin:16px 0}
+        .crate-overlay{position:fixed;inset:0;z-index:30;background:#070a08eF;display:grid;place-items:center;padding:20px;backdrop-filter:blur(8px)}
+        .crate-dialog{width:min(440px,100%);background:linear-gradient(145deg,#202c22,#121815);border:1px solid #b8f36b66;border-radius:18px;padding:27px;text-align:center;box-shadow:0 24px 90px #000b}
+        .crate-box{font-size:76px;line-height:1.2;margin:13px auto 19px;filter:drop-shadow(0 0 20px #b8f36b55)}
+        .crate-box.shaking{animation:crate-shake .16s ease-in-out infinite alternate}
+        .crate-result{animation:crate-reveal .55s cubic-bezier(.2,.8,.2,1) both}
+        .crate-result-color{width:55px;height:55px;border-radius:15px;margin:12px auto;border:2px solid #ffffff99;box-shadow:0 0 28px #ffffff38}
+        @keyframes crate-shake{from{transform:rotate(-9deg) scale(1)}to{transform:rotate(9deg) scale(1.09)}}
+        @keyframes crate-reveal{from{opacity:0;transform:translateY(17px) scale(.8)}to{opacity:1;transform:translateY(0) scale(1)}}
         .token.home{background:var(--team-color)!important;color:#10150f}
         .token.away{background:var(--team-color)!important;color:#fff}
         @media(max-width:850px){.store-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -1807,8 +1831,8 @@ function App() {
           return <article className="store-card" key={player.id}>
             <div className="store-kicker">{player.position} · {player.club}</div>
             <h3 style={{ marginTop: 9 }}>{player.name}</h3>
-            <p>{player.ability} · Ability {player.abilityStat}/100</p>
-            <div className="roster-meta"><span>DAILY OFFER</span><strong>{overallRating(player)} OVR</strong></div>
+            <p>{player.ability}</p>
+            <div className="roster-meta"><span>MEAN STATS · {player.rating} RATING + {player.abilityStat} ABILITY</span><strong>{meanPlayerStats(player)} AVG</strong></div>
             <button className={owned || purchased ? "secondary" : "primary"} disabled={owned || purchased || coins < price}
               onClick={() => buyDailyOffer(player)}>
               {owned ? "IN YOUR SQUAD" : purchased ? "SOLD TODAY" : `SIGN · ◈ ${price}`}
@@ -2000,6 +2024,25 @@ function App() {
           </div></section>
           <section className="side-panel"><h3>{match.finished ? "Full time" : quickplaySide !== null ? `${match.turn === "home" ? "Home" : "Away"} player · ${ownTurn ? "your turn" : "opponent's turn"}` : ownTurn ? "Your turn" : "Opponent's turn"}</h3><div style={{ color: "#929d93", fontSize: 10, lineHeight: 1.8 }}>{quickplaySide !== null ? "Pass-and-play on one device: pass the screen after each turn. Each player controls the team whose turn it is." : "Select one of your players, then click an open tile to move."} Each turn allows one drive and one action. A successful nutmeg grants one extra drive and action; a failed attempt gives the opponent two turns. The ball carrier can pass, shoot, or risk a nutmeg against an adjacent defender. Shot angle affects accuracy. Matches last 90 in-game minutes, with halftime at 45; each game minute takes 3.5 seconds. Existing goal-target rules can end a match earlier.</div><div className="small-note" style={{ marginTop: 10 }}>DRIVE {Math.min(match.drivesUsed, 1 + match.bonusDrives)}/{1 + match.bonusDrives} · ACTION {Math.min(match.actionsUsed, 1 + match.bonusActions)}/{1 + match.bonusActions}</div></section>
         </aside>
+      </div>}
+      {crateReveal && <div className="crate-overlay" role="presentation" onClick={() => { if (crateRevealed) setCrateReveal(null); }}>
+        <section className="crate-dialog" role="dialog" aria-modal="true" aria-labelledby="crate-reveal-title"
+          onClick={(event) => event.stopPropagation()}>
+          <div className="eyebrow">{crateReveal.crate === "thanksgiving" ? "Limited-time drop" : "Store crate"}</div>
+          <h2 id="crate-reveal-title" style={{ margin: "9px 0", fontSize: 22 }}>
+            {crateReveal.crate === "basic" ? "Basic Crate" : crateReveal.crate === "blitz" ? "Blitz Crate" : "Thanksgiving Crate"}
+          </h2>
+          {!crateRevealed
+            ? <><div className="crate-box shaking" aria-label="Crate opening animation">🎁</div><p className="small-note">Your rewards are being revealed…</p></>
+            : <div className="crate-result">
+              <div className="store-kicker">Your rewards</div>
+              <div className="crate-result-color" style={{ background: crateReveal.color.value }} aria-label={`${crateReveal.color.name} team color`} />
+              <strong>{crateReveal.color.name}</strong>
+              <p style={{ color: "#b8c5b9", fontSize: 13, margin: "12px 0 4px" }}>{crateReveal.reward}</p>
+              <small className="small-note">Team color added to your Locker Room{crateReveal.bonusCoins ? " · duplicate color converted to 25 coins" : ""}</small>
+              <button className="primary" style={{ width: "100%", marginTop: 21 }} onClick={() => setCrateReveal(null)}>CONTINUE</button>
+            </div>}
+        </section>
       </div>}
       {notice && <button className="toast" onClick={() => setNotice("")}>{notice} &nbsp; ×</button>}
     </main>

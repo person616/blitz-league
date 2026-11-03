@@ -279,6 +279,7 @@ const formatCountdown = (milliseconds: number) => {
   return `${days ? `${days}d ` : ""}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 const xpRequiredForPassLevel = (passLevel: number) => Math.max(0, (passLevel - 1) * 1000);
+const currentSaveVersion = 3;
 const passLevelForXp = (xp: number) => {
   let passLevel = 1;
   while (passLevel < battlePassFinalLevel && xp >= xpRequiredForPassLevel(passLevel + 1)) passLevel += 1;
@@ -866,8 +867,13 @@ function App() {
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
         const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; customPositions?: Record<string, Position>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        if (data.progressionVersion !== currentSaveVersion) {
+          window.localStorage.removeItem("soccer-baseboard-save");
+          setNotice("Blitz League has started a fresh season. Your regular starting squad is ready.");
+          return;
+        }
         const loadedXp = typeof data.xp === "number" && Number.isFinite(data.xp)
-          ? Math.max(0, Math.floor(data.progressionVersion === 2 ? data.xp : data.xp * 100))
+          ? Math.max(0, Math.floor(data.xp))
           : 0;
         const passLevel = passLevelForXp(loadedXp);
         const savedPlayers = Array.isArray(data.unlockedPlayers)
@@ -920,7 +926,7 @@ function App() {
   useEffect(() => {
     if (!saveReady || devToolsEnabled) return;
     window.localStorage.setItem("blitz-league-save", JSON.stringify({
-      xp, progressionVersion: 2, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors,
+      xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors,
       homeKitColorId, awayKitColorId, dailyOfferPurchases, customPositions, activeFormat, level,
       captionsEnabled, captionSize, endTurnKey,
     }));

@@ -14,6 +14,8 @@ The Store has four daily player offers, coin-to-XP purchases at 4 XP per coin, a
 
 The Locker Room player roster can be sorted by name, position, club, OVR, base rating, ability, mean stats, Season Pass unlock order, and unlocked/locked status.
 
+The current save version performs a one-time season reset for returning browsers: older saves start with the regular starting XI, base progression, and default club kits; subsequent progress is saved normally. Since saves are stored locally in each browser, the reset takes effect the next time a returning player visits the site.
+
 For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode is gated by Vite's development flag, skips saved progress, and is unavailable in production builds and on the public website.
 
 ## Run locally

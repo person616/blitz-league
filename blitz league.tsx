@@ -9,6 +9,7 @@ type FormatId = "classic" | "small-sided" | "golden-goal";
 type CaptionSize = "small" | "medium" | "large";
 type KitColor = { id: string; name: string; value: string };
 type CrateReveal = { crate: "basic" | "blitz" | "thanksgiving"; color: KitColor; reward: string; bonusCoins: number };
+type PlayerSort = "default" | "name-asc" | "name-desc" | "position" | "club" | "ovr-desc" | "ovr-asc" | "rating-desc" | "rating-asc" | "ability-desc" | "ability-asc" | "mean-desc" | "unlock-asc" | "unlock-desc" | "unlocked-first" | "locked-first";
 type Player = {
   id: string;
   name: string;
@@ -645,21 +646,27 @@ function makeMatch(
 }
 
 function App() {
-  const [xp, setXp] = useState(0);
+  const devToolsEnabled = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).get("blitz-dev") === "tools";
+  const [xp, setXp] = useState(() => devToolsEnabled ? xpRequiredForPassLevel(battlePassFinalLevel) : 0);
   const [coins, setCoins] = useState(120);
-  const [unlockedPlayers, setUnlockedPlayers] = useState<string[]>(startingPlayers);
-  const [unlockedFormats, setUnlockedFormats] = useState<FormatId[]>(["classic"]);
-  const [unlockedTeamColors, setUnlockedTeamColors] = useState<string[]>(["lime", "coral"]);
+  const [unlockedPlayers, setUnlockedPlayers] = useState<string[]>(() =>
+    devToolsEnabled ? roster.map((player) => player.id) : startingPlayers);
+  const [unlockedFormats, setUnlockedFormats] = useState<FormatId[]>(() =>
+    devToolsEnabled ? formats.map((format) => format.id) : ["classic"]);
+  const [unlockedTeamColors, setUnlockedTeamColors] = useState<string[]>(() =>
+    devToolsEnabled ? kitColors.map((color) => color.id) : ["lime", "coral"]);
   const [homeKitColorId, setHomeKitColorId] = useState("lime");
   const [awayKitColorId, setAwayKitColorId] = useState("coral");
   const [dailyOfferPurchases, setDailyOfferPurchases] = useState<Record<string, boolean>>({});
   const [storeNow, setStoreNow] = useState(() => Date.now());
   const [crateReveal, setCrateReveal] = useState<CrateReveal | null>(null);
   const [crateRevealed, setCrateRevealed] = useState(false);
+  const [playerSort, setPlayerSort] = useState<PlayerSort>("default");
   const [customPositions, setCustomPositions] = useState<Partial<Record<string, Position>>>({});
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
-  const [level, setLevel] = useState(1);
+  const [level, setLevel] = useState(() => devToolsEnabled ? campaignStageCount : 1);
   const [match, setMatch] = useState<Match>(() => makeMatch([], 1, "classic"));
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
@@ -675,7 +682,7 @@ function App() {
   const latestMatch = useRef(match);
   const lastCaptionMessage = useRef(match.message);
   const captionTimer = useRef<number | undefined>(undefined);
-  const battlePassLevel = passLevelForXp(xp);
+  const battlePassLevel = devToolsEnabled ? battlePassFinalLevel : passLevelForXp(xp);
   const currentLevelXpStart = xpRequiredForPassLevel(battlePassLevel);
   const nextLevelXpTarget = xpRequiredForPassLevel(battlePassLevel + 1);
   const maxPassXp = xpRequiredForPassLevel(battlePassFinalLevel);
@@ -698,16 +705,52 @@ function App() {
     kitColorById(awayKitColorId).value,
   );
   const formatUnlocked = (format: (typeof formats)[number]) =>
-    battlePassLevel >= format.unlock || unlockedFormats.includes(format.id);
+    devToolsEnabled || battlePassLevel >= format.unlock || unlockedFormats.includes(format.id);
   const passProgress = battlePassLevel >= battlePassFinalLevel
     ? 100
     : Math.min(100, (xpTowardNextLevel / xpForNextLevel) * 100);
 
   const homePlayers = useMemo(() => roster
-    .filter((player) => unlockedPlayers.includes(player.id))
+    .filter((player) => devToolsEnabled || unlockedPlayers.includes(player.id))
     .map((player) => customPositions[player.id] && customPositions[player.id] !== player.position
       ? { ...player, position: customPositions[player.id]! }
-      : player), [unlockedPlayers, customPositions]);
+      : player), [unlockedPlayers, customPositions, devToolsEnabled]);
+  const sortedRoster = useMemo(() => {
+    const positionOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
+    const compareText = (a: string, b: string) => a.localeCompare(b);
+    return [...roster].sort((a, b) => {
+      if (playerSort === "default") return roster.indexOf(a) - roster.indexOf(b);
+      const unlockedA = devToolsEnabled || unlockedPlayers.includes(a.id);
+      const unlockedB = devToolsEnabled || unlockedPlayers.includes(b.id);
+      const positionA = customPositions[a.id] ?? a.position;
+      const positionB = customPositions[b.id] ?? b.position;
+      const unlockA = playerUnlocks[a.id] ?? 0;
+      const unlockB = playerUnlocks[b.id] ?? 0;
+      let result = 0;
+      switch (playerSort) {
+        case "name-asc": result = compareText(a.name, b.name); break;
+        case "name-desc": result = compareText(b.name, a.name); break;
+        case "position": result = positionOrder[positionA] - positionOrder[positionB]; break;
+        case "club": result = compareText(a.club, b.club); break;
+        case "ovr-desc": result = overallRating(b) - overallRating(a); break;
+        case "ovr-asc": result = overallRating(a) - overallRating(b); break;
+        case "rating-desc": result = b.rating - a.rating; break;
+        case "rating-asc": result = a.rating - b.rating; break;
+        case "ability-desc": result = b.abilityStat - a.abilityStat; break;
+        case "ability-asc": result = a.abilityStat - b.abilityStat; break;
+        case "mean-desc": result = meanPlayerStats(b) - meanPlayerStats(a); break;
+        case "unlock-asc": result = unlockA - unlockB; break;
+        case "unlock-desc": result = unlockB - unlockA; break;
+        case "unlocked-first": result = Number(unlockedB) - Number(unlockedA); break;
+        case "locked-first": result = Number(unlockedA) - Number(unlockedB); break;
+        default: break;
+      }
+      if (result !== 0) return result;
+      return positionOrder[positionA] - positionOrder[positionB]
+        || overallRating(b) - overallRating(a)
+        || compareText(a.name, b.name);
+    });
+  }, [playerSort, customPositions, unlockedPlayers, devToolsEnabled]);
   const startingXI = useMemo(() => selectXI(homePlayers), [homePlayers]);
   const awayPlayers = useMemo(() => {
     const aiTier = Math.floor((level - 1) / 1.5);
@@ -731,29 +774,29 @@ function App() {
       setNotice("That daily offer has already been purchased today.");
       return;
     }
-    if (coins < price) {
+    if (!devToolsEnabled && coins < price) {
       setNotice(`You need ${price - coins} more coins for ${player.name}.`);
       return;
     }
-    setCoins((current) => current - price);
+    if (!devToolsEnabled) setCoins((current) => current - price);
     setUnlockedPlayers((current) => current.includes(player.id) ? current : [...current, player.id]);
     setDailyOfferPurchases((current) => ({ ...current, [offerKey]: true }));
     setNotice(`${player.name} joined your squad.`);
   };
 
   const buyXp = (coinPrice: number) => {
-    if (coins < coinPrice) {
+    if (!devToolsEnabled && coins < coinPrice) {
       setNotice(`You need ${coinPrice - coins} more coins.`);
       return;
     }
-    if (xp >= maxPassXp) {
+    if (!devToolsEnabled && xp >= maxPassXp) {
       setNotice("Your Season Pass is already at its final level.");
       return;
     }
-    const xpGain = Math.min(coinPrice * 4, maxPassXp - xp);
+    const xpGain = devToolsEnabled ? coinPrice * 4 : Math.min(coinPrice * 4, maxPassXp - xp);
     const actualCost = Math.ceil(xpGain / 4);
-    const newXp = Math.min(maxPassXp, xp + xpGain);
-    setCoins((current) => current - actualCost);
+    const newXp = devToolsEnabled ? xp + xpGain : Math.min(maxPassXp, xp + xpGain);
+    if (!devToolsEnabled) setCoins((current) => current - actualCost);
     setXp(newXp);
     setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(passLevelForXp(newXp))])]);
     setNotice(`Purchased ${xpGain.toLocaleString()} XP for ${actualCost} coins.`);
@@ -765,7 +808,7 @@ function App() {
       return;
     }
     const price = crate === "basic" ? 80 : 350;
-    if (coins < price) {
+    if (!devToolsEnabled && coins < price) {
       setNotice(`You need ${price - coins} more coins to open this crate.`);
       return;
     }
@@ -775,11 +818,11 @@ function App() {
       : kitColors[Math.floor(Math.random() * kitColors.length)];
     const playerPool = cratePlayerPools[crate]
       .map((id) => roster.find((player) => player.id === id))
-      .filter((player): player is Player => !!player && !unlockedPlayers.includes(player.id));
+      .filter((player): player is Player => !!player && (devToolsEnabled || !unlockedPlayers.includes(player.id)));
     const formatPool = crateFormatPools[crate]
       .map((id) => formats.find((format) => format.id === id))
       .filter((format): format is (typeof formats)[number] =>
-        !!format && !unlockedFormats.includes(format.id) && battlePassLevel < format.unlock);
+        !!format && (devToolsEnabled || (!unlockedFormats.includes(format.id) && battlePassLevel < format.unlock)));
     const bonusIsFormat = formatPool.length > 0
       && (playerPool.length === 0 || Math.random() < (crate === "basic" ? 0.08 : 0.22));
     const playerReward = !bonusIsFormat && playerPool.length
@@ -790,7 +833,7 @@ function App() {
       : null;
     const duplicateColor = !lockedColors.length;
     const bonusCoins = duplicateColor ? 25 : 0;
-    setCoins((current) => current - price + bonusCoins);
+    if (!devToolsEnabled) setCoins((current) => current - price + bonusCoins);
     if (colorReward && !unlockedTeamColors.includes(colorReward.id)) {
       setUnlockedTeamColors((current) => [...current, colorReward.id]);
     }
@@ -803,7 +846,7 @@ function App() {
     const bonusLabel = playerReward
       ? `${playerReward.name} (${overallRating(playerReward)} OVR)`
       : formatReward?.name ?? "75 bonus coins";
-    if (!playerReward && !formatReward) setCoins((current) => current + 75);
+    if (!playerReward && !formatReward && !devToolsEnabled) setCoins((current) => current + 75);
     setCrateRevealed(false);
     setCrateReveal({
       crate,
@@ -814,6 +857,10 @@ function App() {
   };
 
   useEffect(() => {
+    if (devToolsEnabled) {
+      setSaveReady(true);
+      return;
+    }
     try {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
@@ -871,14 +918,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!saveReady) return;
+    if (!saveReady || devToolsEnabled) return;
     window.localStorage.setItem("blitz-league-save", JSON.stringify({
       xp, progressionVersion: 2, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors,
       homeKitColorId, awayKitColorId, dailyOfferPurchases, customPositions, activeFormat, level,
       captionsEnabled, captionSize, endTurnKey,
     }));
   }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
-    dailyOfferPurchases, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady]);
+    dailyOfferPurchases, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
 
   useEffect(() => {
     if (screen !== "store") return;
@@ -1733,8 +1780,12 @@ function App() {
           <button className={screen === "pass" ? "active" : ""} onClick={() => setScreen("pass")}>SEASON PASS</button>
           <button className={screen === "settings" ? "active" : ""} onClick={() => { setPassMode(false); setScreen("settings"); }}>SETTINGS</button>
         </nav>
-        <div className="wallet"><span className="coin">◈ {coins}</span><span className="xp-pill">LV {battlePassLevel}</span></div>
+        <div className="wallet"><span className="coin">◈ {devToolsEnabled ? "∞ DEV" : coins}</span><span className="xp-pill">LV {battlePassLevel}</span></div>
       </header>
+
+      {devToolsEnabled && <div className="store-notice" style={{ maxWidth: 1280, margin: "12px auto 0", borderColor: "#e5bd4b88", color: "#f3d982" }}>
+        DEV TOOLS ACTIVE · local development only · unlimited coins · all content unlocked · match win control enabled · progress is not saved
+      </div>}
 
       {screen === "home" && <div className="content">
         <section className="hero">
@@ -1821,7 +1872,7 @@ function App() {
         <div className="eyebrow">Daily deals · spend coins · kit drops</div>
         <h1>Transfer market</h1>
         <p className="subtitle">Sign players, top up Season Pass XP, and open crates for squad rewards and club colors. Your purchases are saved on this device.</p>
-        <div className="store-notice">◈ {coins} coins available · All crates include one random team color. Duplicate colors convert to 25 coins. Crates also contain a player or a format; the listed odds apply while that reward type is still available.</div>
+        <div className="store-notice">◈ {devToolsEnabled ? "Unlimited dev coins" : `${coins} coins available`} · All crates include one random team color. Duplicate colors convert to 25 coins. Crates also contain a player or a format; the listed odds apply while that reward type is still available.</div>
         <div className="panel-heading" style={{ marginTop: 28 }}><h2>Today’s player offers</h2><span className="store-timer">Refreshes in {formatCountdown(nextDailyReset - storeNow)}</span></div>
         <div className="store-grid">{activeDailyOffers.map((player) => {
           const offerKey = `${dailyOfferDateKey}:${player.id}`;
@@ -1833,7 +1884,7 @@ function App() {
             <h3 style={{ marginTop: 9 }}>{player.name}</h3>
             <p>{player.ability}</p>
             <div className="roster-meta"><span>MEAN STATS · {player.rating} RATING + {player.abilityStat} ABILITY</span><strong>{meanPlayerStats(player)} AVG</strong></div>
-            <button className={owned || purchased ? "secondary" : "primary"} disabled={owned || purchased || coins < price}
+            <button className={owned || purchased ? "secondary" : "primary"} disabled={owned || purchased || (!devToolsEnabled && coins < price)}
               onClick={() => buyDailyOffer(player)}>
               {owned ? "IN YOUR SQUAD" : purchased ? "SOLD TODAY" : `SIGN · ◈ ${price}`}
             </button>
@@ -1844,8 +1895,8 @@ function App() {
         <div className="store-grid">{[25, 100, 250].map((price) => <article className="store-card" key={price}>
           <div className="store-kicker">Progress boost</div><h3>{(price * 4).toLocaleString()} XP</h3>
           <p>Moves you closer to your next reward. XP stops at Season Pass Level {battlePassFinalLevel}.</p>
-          <button className="primary" disabled={coins < price || xp >= maxPassXp} onClick={() => buyXp(price)}>
-            {xp >= maxPassXp ? "PASS COMPLETE" : `BUY · ◈ ${price}`}
+          <button className="primary" disabled={!devToolsEnabled && (coins < price || xp >= maxPassXp)} onClick={() => buyXp(price)}>
+            {!devToolsEnabled && xp >= maxPassXp ? "PASS COMPLETE" : devToolsEnabled ? "FREE DEV PURCHASE" : `BUY · ◈ ${price}`}
           </button>
         </article>)}</div>
 
@@ -1854,12 +1905,12 @@ function App() {
           <article className="store-card">
             <div className="store-kicker">Starter crate</div><h3>Basic Crate</h3>
             <p>Low-cost drop. 92% player / 8% format bonus odds; player rewards are mostly below 76 OVR. Includes a random kit color.</p>
-            <button className="secondary" disabled={coins < 80} onClick={() => openCrate("basic")}>OPEN · ◈ 80</button>
+            <button className="secondary" disabled={!devToolsEnabled && coins < 80} onClick={() => openCrate("basic")}>{devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 80"}</button>
           </article>
           <article className="store-card">
             <div className="store-kicker">Premium crate</div><h3>Blitz Crate</h3>
             <p>Higher-tier drop: 78% chance for a featured player rated 85+ OVR, or 22% for a format unlock, plus a random kit color.</p>
-            <button className="primary" disabled={coins < 350} onClick={() => openCrate("blitz")}>OPEN · ◈ 350</button>
+            <button className="primary" disabled={!devToolsEnabled && coins < 350} onClick={() => openCrate("blitz")}>{devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 350"}</button>
           </article>
           <article className="store-card" style={{ borderColor: thanksgivingActive ? "#d19a4b77" : "#ffffff16" }}>
             <div className="store-kicker" style={{ color: thanksgivingActive ? "#f2c276" : undefined }}>Limited-time · Thanksgiving</div>
@@ -1868,8 +1919,8 @@ function App() {
             {thanksgivingActive
               ? <div className="store-timer">ENDS NOV 30, 2026 · {formatCountdown(thanksgivingTimeLeft)}</div>
               : <div className="store-timer">EVENT ENDED · NOV 30, 2026</div>}
-            <button className="secondary" disabled={!thanksgivingActive || coins < 350} onClick={() => openCrate("thanksgiving")}>
-              {thanksgivingActive ? "OPEN · ◈ 350" : "NO LONGER AVAILABLE"}
+            <button className="secondary" disabled={!thanksgivingActive || (!devToolsEnabled && coins < 350)} onClick={() => openCrate("thanksgiving")}>
+              {thanksgivingActive ? devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 350" : "NO LONGER AVAILABLE"}
             </button>
           </article>
         </div>
@@ -1892,8 +1943,33 @@ function App() {
             ? <div className="kit-warning" role="alert">⚠ Team colors are the same or too similar. Choose different colors so both sides are easy to tell apart.</div>
             : <div className="store-notice" style={{ marginBottom: 0 }}>✓ Team colors are distinct and ready for the next match.</div>}
         </section>
-        <div className="panel-heading" style={{ marginTop: 28 }}><h2>Player roster</h2><span>{homePlayers.length} unlocked · {coins} coins</span></div>
-        <div className="locker-grid">{roster.map((player) => {
+        <div className="panel-heading" style={{ marginTop: 28, gap: 14, flexWrap: "wrap" }}>
+          <h2>Player roster</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <label htmlFor="locker-player-sort" className="small-note">SORT BY</label>
+            <select id="locker-player-sort" aria-label="Sort player roster"
+              value={playerSort} onChange={(event) => setPlayerSort(event.target.value as PlayerSort)}>
+              <option value="default">Default roster order</option>
+              <option value="name-asc">Name · A to Z</option>
+              <option value="name-desc">Name · Z to A</option>
+              <option value="position">Position</option>
+              <option value="club">Club · A to Z</option>
+              <option value="ovr-desc">OVR · highest first</option>
+              <option value="ovr-asc">OVR · lowest first</option>
+              <option value="rating-desc">Base rating · highest first</option>
+              <option value="rating-asc">Base rating · lowest first</option>
+              <option value="ability-desc">Ability · highest first</option>
+              <option value="ability-asc">Ability · lowest first</option>
+              <option value="mean-desc">Mean stats · highest first</option>
+              <option value="unlock-asc">Season Pass · earliest unlock</option>
+              <option value="unlock-desc">Season Pass · latest unlock</option>
+              <option value="unlocked-first">Unlocked players first</option>
+              <option value="locked-first">Locked players first</option>
+            </select>
+            <span className="small-note">{homePlayers.length} unlocked · {devToolsEnabled ? "∞" : coins} coins</span>
+          </div>
+        </div>
+        <div className="locker-grid">{sortedRoster.map((player) => {
           const unlocked = unlockedPlayers.includes(player.id);
           const unlockAt = playerUnlocks[player.id];
           const currentPosition = customPositions[player.id] ?? player.position;
@@ -2022,6 +2098,10 @@ function App() {
             <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>
+          {devToolsEnabled && <section className="side-panel"><h3>Developer controls</h3>
+            <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>
+            <div className="small-note" style={{ marginTop: 9 }}>Awards the current match and progression rewards for UI testing.</div>
+          </section>}
           <section className="side-panel"><h3>{match.finished ? "Full time" : quickplaySide !== null ? `${match.turn === "home" ? "Home" : "Away"} player · ${ownTurn ? "your turn" : "opponent's turn"}` : ownTurn ? "Your turn" : "Opponent's turn"}</h3><div style={{ color: "#929d93", fontSize: 10, lineHeight: 1.8 }}>{quickplaySide !== null ? "Pass-and-play on one device: pass the screen after each turn. Each player controls the team whose turn it is." : "Select one of your players, then click an open tile to move."} Each turn allows one drive and one action. A successful nutmeg grants one extra drive and action; a failed attempt gives the opponent two turns. The ball carrier can pass, shoot, or risk a nutmeg against an adjacent defender. Shot angle affects accuracy. Matches last 90 in-game minutes, with halftime at 45; each game minute takes 3.5 seconds. Existing goal-target rules can end a match earlier.</div><div className="small-note" style={{ marginTop: 10 }}>DRIVE {Math.min(match.drivesUsed, 1 + match.bonusDrives)}/{1 + match.bonusDrives} · ACTION {Math.min(match.actionsUsed, 1 + match.bonusActions)}/{1 + match.bonusActions}</div></section>
         </aside>
       </div>}

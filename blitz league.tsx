@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
 type FormatId = "classic" | "small-sided" | "golden-goal";
 type CaptionSize = "small" | "medium" | "large";
+type KitColor = { id: string; name: string; value: string };
 type Player = {
   id: string;
   name: string;
@@ -212,6 +214,67 @@ const formats: { id: FormatId; name: string; detail: string; unlock: number }[] 
   { id: "small-sided", name: "Street 3v3", detail: "Fast, open play · first to 2 goals", unlock: smallSidedLevel },
   { id: "golden-goal", name: "Golden Goal", detail: "One goal wins · sudden death", unlock: goldenGoalLevel },
 ];
+const kitColors: KitColor[] = [
+  { id: "lime", name: "League Lime", value: "#b8f36b" },
+  { id: "coral", name: "Kickoff Coral", value: "#ec695e" },
+  { id: "sky", name: "Sky Blue", value: "#65b9f4" },
+  { id: "violet", name: "Violet", value: "#a68af6" },
+  { id: "gold", name: "Golden Hour", value: "#f2c84b" },
+  { id: "mint", name: "Mint", value: "#55d6a4" },
+  { id: "rose", name: "Rose", value: "#f07bac" },
+  { id: "orange", name: "Orange", value: "#ff914d" },
+  { id: "ice", name: "Ice Blue", value: "#a5e8f4" },
+  { id: "navy", name: "Deep Navy", value: "#4966b2" },
+  { id: "red", name: "Match Red", value: "#dc3948" },
+  { id: "white", name: "Away White", value: "#e9eee9" },
+  { id: "teal", name: "Teal", value: "#169c9b" },
+  { id: "purple", name: "Purple", value: "#733bb5" },
+  { id: "yellow", name: "Referee Yellow", value: "#e7e82f" },
+  { id: "charcoal", name: "Charcoal", value: "#525e58" },
+];
+const dailyOfferPlayers = roster.filter((player) => overallRating(player) >= 82);
+const dailyOfferPrice = (player: Player) => 180 + Math.max(0, overallRating(player) - 82) * 28;
+const dailyPlayerOffers = (date: Date) => {
+  const dayKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  let seed = Array.from(dayKey).reduce((value, char) => (value * 31 + char.charCodeAt(0)) >>> 0, 7);
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+  const pool = [...dailyOfferPlayers];
+  const offers: Player[] = [];
+  while (offers.length < 4 && pool.length) {
+    const index = Math.floor(random() * pool.length);
+    offers.push(pool.splice(index, 1)[0]);
+  }
+  return offers;
+};
+const thanksgivingCrateEnds = new Date("2026-12-01T05:00:00Z").getTime();
+const cratePlayerPools: Record<"basic" | "blitz" | "thanksgiving", string[]> = {
+  basic: roster.filter((player) => overallRating(player) < 76).map((player) => player.id),
+  blitz: ["suarez", "burki", "cucho", "messi", "bouanga", "puig", "mukhtar", "vela", "acosta", "dreyer", "morris"],
+  thanksgiving: ["mls-guzan", "mls-driussi", "mls-lloris", "mls-giroud", "mls-reus", "mls-miranchuk", "mls-forsberg", "mls-blake", "mls-gil", "mls-gauld", "mls-espinoza"],
+};
+const crateFormatPools: Record<"basic" | "blitz" | "thanksgiving", FormatId[]> = {
+  basic: ["small-sided"],
+  blitz: ["golden-goal", "small-sided"],
+  thanksgiving: ["small-sided", "golden-goal"],
+};
+const kitColorById = (id: string) => kitColors.find((color) => color.id === id) ?? kitColors[0];
+const kitColorsTooSimilar = (first: string, second: string) => {
+  const rgb = (hex: string) => hex.match(/[a-f\d]{2}/gi)?.map((part) => parseInt(part, 16)) ?? [0, 0, 0];
+  const a = rgb(first);
+  const b = rgb(second);
+  return Math.sqrt(a.reduce((sum, channel, index) => sum + (channel - b[index]) ** 2, 0)) < 115;
+};
+const formatCountdown = (milliseconds: number) => {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${days ? `${days}d ` : ""}${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+};
 const xpRequiredForPassLevel = (passLevel: number) => Math.max(0, (passLevel - 1) * 1000);
 const passLevelForXp = (xp: number) => {
   let passLevel = 1;
@@ -583,9 +646,15 @@ function App() {
   const [xp, setXp] = useState(0);
   const [coins, setCoins] = useState(120);
   const [unlockedPlayers, setUnlockedPlayers] = useState<string[]>(startingPlayers);
+  const [unlockedFormats, setUnlockedFormats] = useState<FormatId[]>(["classic"]);
+  const [unlockedTeamColors, setUnlockedTeamColors] = useState<string[]>(["lime", "coral"]);
+  const [homeKitColorId, setHomeKitColorId] = useState("lime");
+  const [awayKitColorId, setAwayKitColorId] = useState("coral");
+  const [dailyOfferPurchases, setDailyOfferPurchases] = useState<Record<string, boolean>>({});
+  const [storeNow, setStoreNow] = useState(() => Date.now());
   const [customPositions, setCustomPositions] = useState<Partial<Record<string, Position>>>({});
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
-  const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "quickplay" | "settings">("home");
+  const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
   const [level, setLevel] = useState(1);
   const [match, setMatch] = useState<Match>(() => makeMatch([], 1, "classic"));
   const [notice, setNotice] = useState("");
@@ -605,8 +674,27 @@ function App() {
   const battlePassLevel = passLevelForXp(xp);
   const currentLevelXpStart = xpRequiredForPassLevel(battlePassLevel);
   const nextLevelXpTarget = xpRequiredForPassLevel(battlePassLevel + 1);
+  const maxPassXp = xpRequiredForPassLevel(battlePassFinalLevel);
   const xpTowardNextLevel = xp - currentLevelXpStart;
   const xpForNextLevel = nextLevelXpTarget - currentLevelXpStart;
+  const activeDailyOffers = dailyPlayerOffers(new Date(storeNow));
+  const dailyOfferDateKey = (() => {
+    const date = new Date(storeNow);
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  })();
+  const nextDailyReset = (() => {
+    const reset = new Date(storeNow);
+    reset.setHours(24, 0, 0, 0);
+    return reset.getTime();
+  })();
+  const thanksgivingActive = storeNow < thanksgivingCrateEnds;
+  const thanksgivingTimeLeft = Math.max(0, thanksgivingCrateEnds - storeNow);
+  const teamColorsSimilar = kitColorsTooSimilar(
+    kitColorById(homeKitColorId).value,
+    kitColorById(awayKitColorId).value,
+  );
+  const formatUnlocked = (format: (typeof formats)[number]) =>
+    battlePassLevel >= format.unlock || unlockedFormats.includes(format.id);
   const passProgress = battlePassLevel >= battlePassFinalLevel
     ? 100
     : Math.min(100, (xpTowardNextLevel / xpForNextLevel) * 100);
@@ -628,18 +716,127 @@ function App() {
   const scoreLabel = `${match.score[0]} — ${match.score[1]}`;
   const clockLabel = match.halftime ? "45' · HT" : `${match.minute}'`;
 
+  const buyDailyOffer = (player: Player) => {
+    const offerKey = `${dailyOfferDateKey}:${player.id}`;
+    const price = dailyOfferPrice(player);
+    if (unlockedPlayers.includes(player.id)) {
+      setNotice(`${player.name} is already in your squad.`);
+      return;
+    }
+    if (dailyOfferPurchases[offerKey]) {
+      setNotice("That daily offer has already been purchased today.");
+      return;
+    }
+    if (coins < price) {
+      setNotice(`You need ${price - coins} more coins for ${player.name}.`);
+      return;
+    }
+    setCoins((current) => current - price);
+    setUnlockedPlayers((current) => current.includes(player.id) ? current : [...current, player.id]);
+    setDailyOfferPurchases((current) => ({ ...current, [offerKey]: true }));
+    setNotice(`${player.name} joined your squad.`);
+  };
+
+  const buyXp = (coinPrice: number) => {
+    if (coins < coinPrice) {
+      setNotice(`You need ${coinPrice - coins} more coins.`);
+      return;
+    }
+    if (xp >= maxPassXp) {
+      setNotice("Your Season Pass is already at its final level.");
+      return;
+    }
+    const xpGain = Math.min(coinPrice * 4, maxPassXp - xp);
+    const actualCost = Math.ceil(xpGain / 4);
+    const newXp = Math.min(maxPassXp, xp + xpGain);
+    setCoins((current) => current - actualCost);
+    setXp(newXp);
+    setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(passLevelForXp(newXp))])]);
+    setNotice(`Purchased ${xpGain.toLocaleString()} XP for ${actualCost} coins.`);
+  };
+
+  const openCrate = (crate: "basic" | "blitz" | "thanksgiving") => {
+    if (crate === "thanksgiving" && !thanksgivingActive) {
+      setNotice("The Thanksgiving crate has expired.");
+      return;
+    }
+    const price = crate === "basic" ? 80 : 350;
+    if (coins < price) {
+      setNotice(`You need ${price - coins} more coins to open this crate.`);
+      return;
+    }
+    const lockedColors = kitColors.filter((color) => !unlockedTeamColors.includes(color.id));
+    const colorReward = lockedColors.length
+      ? lockedColors[Math.floor(Math.random() * lockedColors.length)]
+      : kitColors[Math.floor(Math.random() * kitColors.length)];
+    const playerPool = cratePlayerPools[crate]
+      .map((id) => roster.find((player) => player.id === id))
+      .filter((player): player is Player => !!player && !unlockedPlayers.includes(player.id));
+    const formatPool = crateFormatPools[crate]
+      .map((id) => formats.find((format) => format.id === id))
+      .filter((format): format is (typeof formats)[number] =>
+        !!format && !unlockedFormats.includes(format.id) && battlePassLevel < format.unlock);
+    const bonusIsFormat = formatPool.length > 0
+      && (playerPool.length === 0 || Math.random() < (crate === "basic" ? 0.08 : 0.22));
+    const playerReward = !bonusIsFormat && playerPool.length
+      ? playerPool[Math.floor(Math.random() * playerPool.length)]
+      : null;
+    const formatReward = bonusIsFormat
+      ? formatPool[Math.floor(Math.random() * formatPool.length)]
+      : null;
+    const duplicateColor = !lockedColors.length;
+    const bonusCoins = duplicateColor ? 25 : 0;
+    setCoins((current) => current - price + bonusCoins);
+    if (colorReward && !unlockedTeamColors.includes(colorReward.id)) {
+      setUnlockedTeamColors((current) => [...current, colorReward.id]);
+    }
+    if (playerReward) {
+      setUnlockedPlayers((current) => current.includes(playerReward.id) ? current : [...current, playerReward.id]);
+    }
+    if (formatReward) {
+      setUnlockedFormats((current) => current.includes(formatReward.id) ? current : [...current, formatReward.id]);
+    }
+    const bonusLabel = playerReward
+      ? `${playerReward.name} (${overallRating(playerReward)} OVR)`
+      : formatReward?.name ?? "75 coins";
+    if (!playerReward && !formatReward) setCoins((current) => current + 75);
+    setNotice(`Crate opened: ${colorReward?.name ?? "team color"} + ${bonusLabel}${duplicateColor ? " · duplicate color converted to 25 coins" : ""}.`);
+  };
+
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; customPositions?: Record<string, Position>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; customPositions?: Record<string, Position>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
         const loadedXp = typeof data.xp === "number" && Number.isFinite(data.xp)
           ? Math.max(0, Math.floor(data.progressionVersion === 2 ? data.xp : data.xp * 100))
           : 0;
+        const passLevel = passLevelForXp(loadedXp);
+        const savedPlayers = Array.isArray(data.unlockedPlayers)
+          ? data.unlockedPlayers.filter((id) => roster.some((player) => player.id === id))
+          : [];
         if (typeof data.xp === "number" && Number.isFinite(data.xp)) {
           setXp(loadedXp);
-          setUnlockedPlayers(playersAvailableAt(passLevelForXp(loadedXp)));
+          setUnlockedPlayers([...new Set([...playersAvailableAt(passLevel), ...savedPlayers])]);
+        }
+        const savedFormats = Array.isArray(data.unlockedFormats)
+          ? data.unlockedFormats.filter((id): id is FormatId => formats.some((format) => format.id === id))
+          : [];
+        setUnlockedFormats([...new Set(["classic" as FormatId, ...savedFormats])]);
+        const savedColors = Array.isArray(data.unlockedTeamColors)
+          ? data.unlockedTeamColors.filter((id) => kitColors.some((color) => color.id === id))
+          : [];
+        const ownedColors = [...new Set(["lime", "coral", ...savedColors])];
+        setUnlockedTeamColors(ownedColors);
+        if (typeof data.homeKitColorId === "string" && ownedColors.includes(data.homeKitColorId)) {
+          setHomeKitColorId(data.homeKitColorId);
+        }
+        if (typeof data.awayKitColorId === "string" && ownedColors.includes(data.awayKitColorId)) {
+          setAwayKitColorId(data.awayKitColorId);
+        }
+        if (data.dailyOfferPurchases && typeof data.dailyOfferPurchases === "object") {
+          setDailyOfferPurchases(data.dailyOfferPurchases);
         }
         if (data.customPositions && typeof data.customPositions === "object") {
           const validPositions = Object.fromEntries(Object.entries(data.customPositions)
@@ -649,7 +846,7 @@ function App() {
         }
         if (typeof data.coins === "number") setCoins(data.coins);
         if (data.activeFormat && formats.some((f) => f.id === data.activeFormat
-          && f.unlock <= passLevelForXp(loadedXp))) setActiveFormat(data.activeFormat);
+          && (f.unlock <= passLevel || savedFormats.includes(f.id)))) setActiveFormat(data.activeFormat);
         if (typeof data.level === "number") setLevel(data.level);
         if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
         if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
@@ -666,9 +863,18 @@ function App() {
   useEffect(() => {
     if (!saveReady) return;
     window.localStorage.setItem("blitz-league-save", JSON.stringify({
-      xp, progressionVersion: 2, coins, unlockedPlayers, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey,
+      xp, progressionVersion: 2, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors,
+      homeKitColorId, awayKitColorId, dailyOfferPurchases, customPositions, activeFormat, level,
+      captionsEnabled, captionSize, endTurnKey,
     }));
-  }, [xp, coins, unlockedPlayers, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady]);
+  }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
+    dailyOfferPurchases, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady]);
+
+  useEffect(() => {
+    if (screen !== "store") return;
+    const timer = window.setInterval(() => setStoreNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [screen]);
 
   useEffect(() => {
     latestMatch.current = match;
@@ -983,7 +1189,7 @@ function App() {
         const nextXp = xp + xpReward;
         const nextPassLevel = passLevelForXp(nextXp);
         setXp(nextXp);
-        setUnlockedPlayers(playersAvailableAt(nextPassLevel));
+        setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(nextPassLevel)])]);
         if (quickplayMode === null) {
           if (state.campaignStage === level) setLevel((value) => value + 1);
           setCoins((value) => value + 30 + state.campaignStage * 5);
@@ -1477,6 +1683,21 @@ function App() {
         @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
         @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
       `}</style>
+      <style>{`
+        .store-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:13px;margin:18px 0 30px}
+        .store-card{background:#141a17;border:1px solid #ffffff16;border-radius:13px;padding:17px}
+        .store-card h3{font-size:14px;margin:0 0 8px}.store-card p{color:#929d93;font-size:10px;line-height:1.55;min-height:32px}
+        .store-card .primary,.store-card .secondary{width:100%;margin-top:12px}
+        .store-kicker{font:10px 'DM Mono',monospace;color:#b8f36b;letter-spacing:.08em;text-transform:uppercase}
+        .store-timer{font:11px 'DM Mono',monospace;color:#f2d578}
+        .kit-preview{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;border:1px solid #ffffff55;vertical-align:middle;margin-right:8px}
+        .kit-warning{background:#46251f;border:1px solid #e8775d88;border-radius:9px;padding:12px 14px;color:#ffb19a;font-size:11px;line-height:1.55;margin:12px 0}
+        .store-notice{background:#1c2820;border:1px solid #b8f36b33;border-radius:10px;padding:12px 14px;color:#cbd8cb;font-size:11px;line-height:1.6;margin:16px 0}
+        .token.home{background:var(--team-color)!important;color:#10150f}
+        .token.away{background:var(--team-color)!important;color:#fff}
+        @media(max-width:850px){.store-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:520px){.store-grid{grid-template-columns:1fr}}
+      `}</style>
       <header className="topbar">
         <div className="brand"><div className="brand-mark">⚽</div><div>BLITZ LEAGUE<small>TACTICAL PITCH · SEASON 01</small></div></div>
         <nav className="nav">
@@ -1484,6 +1705,7 @@ function App() {
           <button className={screen === "campaign" ? "active" : ""} onClick={() => { stopQuickplay(); setScreen("campaign"); }}>CAMPAIGN</button>
           <button className={screen === "quickplay" ? "active" : ""} onClick={showQuickplayOptions}>QUICKPLAY</button>
           <button className={screen === "locker" ? "active" : ""} onClick={() => setScreen("locker")}>LOCKER ROOM</button>
+          <button className={screen === "store" ? "active" : ""} onClick={() => setScreen("store")}>STORE</button>
           <button className={screen === "pass" ? "active" : ""} onClick={() => setScreen("pass")}>SEASON PASS</button>
           <button className={screen === "settings" ? "active" : ""} onClick={() => { setPassMode(false); setScreen("settings"); }}>SETTINGS</button>
         </nav>
@@ -1519,7 +1741,7 @@ function App() {
                 </div>;
               })}</div>
             <div className="panel-heading" style={{ marginTop: 29 }}><h2>Choose your format</h2><span>Unlocked formats</span></div>
-            {formats.map((f) => <div key={f.id} className="campaign-card" style={{ padding: "13px 15px", marginBottom: 8, opacity: battlePassLevel >= f.unlock ? 1 : .5 }}><div><strong style={{ fontSize: 11 }}>{f.name}</strong><p>{f.detail}</p></div><span className="badge">{battlePassLevel >= f.unlock ? (activeFormat === f.id ? "ACTIVE" : "READY") : `LV ${f.unlock}`}</span></div>)}
+            {formats.map((f) => <div key={f.id} className="campaign-card" style={{ padding: "13px 15px", marginBottom: 8, opacity: formatUnlocked(f) ? 1 : .5 }}><div><strong style={{ fontSize: 11 }}>{f.name}</strong><p>{f.detail}</p></div><span className="badge">{formatUnlocked(f) ? (activeFormat === f.id ? "ACTIVE" : "READY") : `LV ${f.unlock}`}</span></div>)}
           </section>
         </div>
       </div>}
@@ -1571,8 +1793,81 @@ function App() {
         </section>
       </div>}
 
+      {screen === "store" && <div className="content" style={{ paddingTop: 40 }}>
+        <div className="eyebrow">Daily deals · spend coins · kit drops</div>
+        <h1>Transfer market</h1>
+        <p className="subtitle">Sign players, top up Season Pass XP, and open crates for squad rewards and club colors. Your purchases are saved on this device.</p>
+        <div className="store-notice">◈ {coins} coins available · All crates include one random team color. Duplicate colors convert to 25 coins. Crates also contain a player or a format; the listed odds apply while that reward type is still available.</div>
+        <div className="panel-heading" style={{ marginTop: 28 }}><h2>Today’s player offers</h2><span className="store-timer">Refreshes in {formatCountdown(nextDailyReset - storeNow)}</span></div>
+        <div className="store-grid">{activeDailyOffers.map((player) => {
+          const offerKey = `${dailyOfferDateKey}:${player.id}`;
+          const price = dailyOfferPrice(player);
+          const owned = unlockedPlayers.includes(player.id);
+          const purchased = !!dailyOfferPurchases[offerKey];
+          return <article className="store-card" key={player.id}>
+            <div className="store-kicker">{player.position} · {player.club}</div>
+            <h3 style={{ marginTop: 9 }}>{player.name}</h3>
+            <p>{player.ability} · Ability {player.abilityStat}/100</p>
+            <div className="roster-meta"><span>DAILY OFFER</span><strong>{overallRating(player)} OVR</strong></div>
+            <button className={owned || purchased ? "secondary" : "primary"} disabled={owned || purchased || coins < price}
+              onClick={() => buyDailyOffer(player)}>
+              {owned ? "IN YOUR SQUAD" : purchased ? "SOLD TODAY" : `SIGN · ◈ ${price}`}
+            </button>
+          </article>;
+        })}</div>
+
+        <div className="panel-heading"><h2>Buy Season Pass XP</h2><span>4 XP per coin</span></div>
+        <div className="store-grid">{[25, 100, 250].map((price) => <article className="store-card" key={price}>
+          <div className="store-kicker">Progress boost</div><h3>{(price * 4).toLocaleString()} XP</h3>
+          <p>Moves you closer to your next reward. XP stops at Season Pass Level {battlePassFinalLevel}.</p>
+          <button className="primary" disabled={coins < price || xp >= maxPassXp} onClick={() => buyXp(price)}>
+            {xp >= maxPassXp ? "PASS COMPLETE" : `BUY · ◈ ${price}`}
+          </button>
+        </article>)}</div>
+
+        <div className="panel-heading"><h2>Crates</h2><span>Random rewards · color included every time</span></div>
+        <div className="store-grid">
+          <article className="store-card">
+            <div className="store-kicker">Starter crate</div><h3>Basic Crate</h3>
+            <p>Low-cost drop. 92% player / 8% format bonus odds; player rewards are mostly below 76 OVR. Includes a random kit color.</p>
+            <button className="secondary" disabled={coins < 80} onClick={() => openCrate("basic")}>OPEN · ◈ 80</button>
+          </article>
+          <article className="store-card">
+            <div className="store-kicker">Premium crate</div><h3>Blitz Crate</h3>
+            <p>Higher-tier drop: 78% chance for a featured player rated 85+ OVR, or 22% for a format unlock, plus a random kit color.</p>
+            <button className="primary" disabled={coins < 350} onClick={() => openCrate("blitz")}>OPEN · ◈ 350</button>
+          </article>
+          <article className="store-card" style={{ borderColor: thanksgivingActive ? "#d19a4b77" : "#ffffff16" }}>
+            <div className="store-kicker" style={{ color: thanksgivingActive ? "#f2c276" : undefined }}>Limited-time · Thanksgiving</div>
+            <h3>Thanksgiving Crate</h3>
+            <p>Same 78% player / 22% format odds and price as Blitz, with a different player and format pool. Includes a random kit color.</p>
+            {thanksgivingActive
+              ? <div className="store-timer">ENDS NOV 30, 2026 · {formatCountdown(thanksgivingTimeLeft)}</div>
+              : <div className="store-timer">EVENT ENDED · NOV 30, 2026</div>}
+            <button className="secondary" disabled={!thanksgivingActive || coins < 350} onClick={() => openCrate("thanksgiving")}>
+              {thanksgivingActive ? "OPEN · ◈ 350" : "NO LONGER AVAILABLE"}
+            </button>
+          </article>
+        </div>
+      </div>}
+
       {screen === "locker" && <div className="content" style={{ paddingTop: 40 }}>
         <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Players are selected for the first 11 in their listed position. Change a player’s position here to customize your lineup. OVR weights the ability stat twice: (base rating + 2 × ability) ÷ 3. Ratings are game estimates, not official MLS ratings.</p>
+        <section className="settings-card" style={{ maxWidth: "none", marginTop: 25 }}>
+          <div className="panel-heading"><h2>Club kits</h2><span>{unlockedTeamColors.length} colors unlocked</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7 }}>Choose colors for your team and the opposition. Earn more colors from any crate; every crate includes a color drop.</p>
+          <div className="setting-row">
+            <div className="setting-copy"><strong>Your team</strong><small><span className="kit-preview" style={{ background: kitColorById(homeKitColorId).value }} />{kitColorById(homeKitColorId).name}</small></div>
+            <div className="setting-options"><select aria-label="Your team color" value={homeKitColorId} onChange={(event) => setHomeKitColorId(event.target.value)}>{unlockedTeamColors.map((id) => <option key={id} value={id}>{kitColorById(id).name}</option>)}</select></div>
+          </div>
+          <div className="setting-row">
+            <div className="setting-copy"><strong>Opposition team</strong><small><span className="kit-preview" style={{ background: kitColorById(awayKitColorId).value }} />{kitColorById(awayKitColorId).name}</small></div>
+            <div className="setting-options"><select aria-label="Opposition team color" value={awayKitColorId} onChange={(event) => setAwayKitColorId(event.target.value)}>{unlockedTeamColors.map((id) => <option key={id} value={id}>{kitColorById(id).name}</option>)}</select></div>
+          </div>
+          {teamColorsSimilar
+            ? <div className="kit-warning" role="alert">⚠ Team colors are the same or too similar. Choose different colors so both sides are easy to tell apart.</div>
+            : <div className="store-notice" style={{ marginBottom: 0 }}>✓ Team colors are distinct and ready for the next match.</div>}
+        </section>
         <div className="panel-heading" style={{ marginTop: 28 }}><h2>Player roster</h2><span>{homePlayers.length} unlocked · {coins} coins</span></div>
         <div className="locker-grid">{roster.map((player) => {
           const unlocked = unlockedPlayers.includes(player.id);
@@ -1596,7 +1891,7 @@ function App() {
           </article>;
         })}</div>
         <div className="panel-heading" style={{ marginTop: 33 }}><h2>Match formats</h2><span>Unlock at Season Pass Levels 10 and 20</span></div>
-        <div className="format-grid">{formats.map((f) => <article className="format-card" key={f.id}><h3>{f.name}</h3><p>{f.detail}</p>{battlePassLevel >= f.unlock ? <button className={activeFormat === f.id ? "primary" : "secondary"} onClick={() => { setActiveFormat(f.id); setNotice(`${f.name} selected.`); }}>{activeFormat === f.id ? "SELECTED" : "SELECT FORMAT"}</button> : <button className="secondary" disabled>UNLOCK AT LEVEL {f.unlock}</button>}</article>)}</div>
+        <div className="format-grid">{formats.map((f) => <article className="format-card" key={f.id}><h3>{f.name}</h3><p>{f.detail}</p>{formatUnlocked(f) ? <button className={activeFormat === f.id ? "primary" : "secondary"} onClick={() => { setActiveFormat(f.id); setNotice(`${f.name} selected.`); }}>{activeFormat === f.id ? "SELECTED" : "SELECT FORMAT"}</button> : <button className="secondary" disabled>UNLOCK AT LEVEL {f.unlock}</button>}</article>)}</div>
       </div>}
 
       {screen === "quickplay" && <div className="content quickplay-page">
@@ -1674,6 +1969,7 @@ function App() {
         <section>
           <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(quickplayMode !== null ? "classic" : activeFormat).name.toUpperCase()}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
           {match.halftime && <div className="halftime-panel"><div><strong>Halftime · {scoreLabel}</strong><small>Teams have switched ends. Each in-game minute lasts 3.5 seconds.</small></div><button className="primary" onClick={resumeSecondHalf}>START SECOND HALF</button></div>}
+          {teamColorsSimilar && <div className="kit-warning" role="alert">⚠ Your team and opposition colors are too similar. Change one in Locker Room to make the sides easier to distinguish.</div>}
           <div className="pitch-wrap"><div className="pitch-viewport"><div className="pitch" aria-label="22 by 11 football pitch" style={{ transform: `translate(-${pitchCameraX}%, -${pitchCameraY}%)` }}>
             {Array.from({ length: 11 }, (_, y) => Array.from({ length: 22 }, (_, x) => {
               const token = match.tokens.find((t) => t.x === x && t.y === y);
@@ -1684,13 +1980,13 @@ function App() {
               const isNutmegTarget = !!token && !passMode && token.player.id === nutmegTargetId;
               return <button aria-label={`Tile ${x + 1}, ${y + 1}${token ? `: ${token.player.name}` : ""}${ballHere ? ", ball" : ""}${isAvailable ? ", available move" : ""}${isPassTarget ? ", pass receiver" : ""}${isNutmegTarget ? ", attempt nutmeg" : ""}`} className={`cell ${x === 0 ? "goal-left" : ""} ${x === 21 ? "goal-right" : ""} ${isAvailable ? "move-available" : ""} ${isPassTarget ? "pass-target" : ""} ${isNutmegTarget ? "nutmeg-target" : ""}`} key={`${x}-${y}`} onClick={() => onCellClick(x, y)}>
                 {isAvailable && <span className="move-marker" />}
-                {token ? <span className={`token ${token.side} ${selected ? "selected" : ""}`} style={{ background: token.side === "home" ? "#b8f36b" : "#ec695e" }}>{token.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}{ballHere && <i className="ball" />}</span> : ballHere ? <span className="ball-only">⚽</span> : null}
+                {token ? <span className={`token ${token.side} ${selected ? "selected" : ""}`} style={{ "--team-color": kitColorById(token.side === "home" ? homeKitColorId : awayKitColorId).value } as CSSProperties}>{token.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}{ballHere && <i className="ball" />}</span> : ballHere ? <span className="ball-only">⚽</span> : null}
                 {isPassTarget && <span className="interaction-marker pass-marker" aria-hidden="true">↗</span>}
                 {isNutmegTarget && <span className="interaction-marker nutmeg-marker" aria-hidden="true">〰</span>}
               </button>;
             }))}
             <div className="goal-overlay" aria-hidden="true"><span className="penalty-box left" /><span className="penalty-box right" /><span className="goal-frame left" /><span className="goal-frame right" /></div>
-          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: "#b8f36b" }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: "#ec695e" }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{quickplayMode !== null || activeFormat !== "small-sided" ? "11v11" : "3v3"} · 22 × 11 TILES</span></div></div>
+          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: kitColorById(homeKitColorId).value }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: kitColorById(awayKitColorId).value }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{quickplayMode !== null || activeFormat !== "small-sided" ? "11v11" : "3v3"} · 22 × 11 TILES</span></div></div>
           <div className="message">{match.message}</div>
         </section>
         <aside className="sidebar">

@@ -10,6 +10,8 @@ The reward balance model was tested on seeded, synthetic self-play—not real ML
 
 Season-pass levels require 1,000 XP each. Regular match wins grant 100 XP; campaign wins grant 100 XP per campaign stage. The campaign has 55 levels, with Street 3v3 unlocking at pass level 10 and Golden Goal at level 20.
 
+The Store has four daily player offers, coin-to-XP purchases at 4 XP per coin, and Basic, Blitz, and Thanksgiving crates. Every crate includes a random club color; duplicate colors convert to coins. The Thanksgiving crate is available through November 30, 2026. Locker Room saves separate colors for your team and the opposition and warns when they are too similar. Purchases, crate rewards, and kit selections are stored in the browser's local save.
+
 ## Run locally
 
 1. Install Node.js.

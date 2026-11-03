@@ -4,7 +4,9 @@
 
 Blitz League is a turn-based soccer tactics game featuring MLS-inspired players, campaign matches, quickplay, and a season pass.
 
-Player ratings and ability values are gameplay estimates, not official MLS statistics. Players start in their listed positions; unlocked players can be repositioned in the Locker Room. Set or unbind the end-turn key in Settings.
+Player ratings and ability values are gameplay estimates, not official MLS statistics. Ability is a numeric stat and is weighted twice when calculating OVR: `(base rating + 2 × ability) / 3`. Player selection uses this OVR, while abilities also affect their matching gameplay actions. Season-pass player rewards are ordered from lower to higher modeled win impact, with 90+ OVR milestone players at levels 21 (Mukhtar), 41 (Puig), 61 (Messi), 81 (Bouanga), 101 (Vela), 121 (Bürki), 141 (Cucho), and 161 (Suárez).
+
+The reward balance model was tested on seeded, synthetic self-play—not real MLS match data. It used 36,000 simulated matches to fit a logistic win-probability model, then compared individual player upgrades against 320 held-out lineups and tested top-player pairs. These results guide game balance only and should not be read as real-world player rankings. Players start in their listed positions; unlocked players can be repositioned in the Locker Room. Set or unbind the end-turn key in Settings.
 
 Season-pass levels require 1,000 XP each. Regular match wins grant 100 XP; campaign wins grant 100 XP per campaign stage. The campaign has 55 levels, with Street 3v3 unlocking at pass level 10 and Golden Goal at level 20.
 

@@ -41,23 +41,23 @@ export type Match = {
 
 const roster: Player[] = [
   { id: "messi", name: "Lionel Messi", club: "Inter Miami CF", position: "FWD", rating: 91, ability: "Deadeye · elite close control", abilityType: "dribbling", abilityStat: 96, color: "#f36b87" },
-  { id: "suarez", name: "Luis Suárez", club: "Inter Miami CF", position: "FWD", rating: 84, ability: "Poacher · sharp finishing", abilityType: "finishing", abilityStat: 88, color: "#f36b87" },
+  { id: "suarez", name: "Luis Suárez", club: "Inter Miami CF", position: "FWD", rating: 92, ability: "Poacher · sharp finishing", abilityType: "finishing", abilityStat: 95, color: "#f36b87" },
   { id: "alba", name: "Jordi Alba", club: "Inter Miami CF", position: "DEF", rating: 82, ability: "Overlap · pace on the flank", abilityType: "pace", abilityStat: 84, color: "#f36b87" },
   { id: "busquets", name: "Sergio Busquets", club: "Inter Miami CF", position: "MID", rating: 81, ability: "Metronome · passing range", abilityType: "playmaking", abilityStat: 89, color: "#f36b87" },
-  { id: "bouanga", name: "Denis Bouanga", club: "LAFC", position: "FWD", rating: 88, ability: "Rapid · attacking pace", abilityType: "pace", abilityStat: 88, color: "#f5b942" },
+  { id: "bouanga", name: "Denis Bouanga", club: "LAFC", position: "FWD", rating: 91, ability: "Rapid · attacking pace", abilityType: "pace", abilityStat: 94, color: "#f5b942" },
   { id: "chiellini", name: "Giorgio Chiellini", club: "LAFC", position: "DEF", rating: 77, ability: "Anchor · defensive positioning", abilityType: "defending", abilityStat: 81, color: "#f5b942" },
-  { id: "puig", name: "Riqui Puig", club: "LA Galaxy", position: "MID", rating: 85, ability: "Playmaker · progressive passing", abilityType: "playmaking", abilityStat: 88, color: "#8b73dc" },
+  { id: "puig", name: "Riqui Puig", club: "LA Galaxy", position: "MID", rating: 91, ability: "Playmaker · progressive passing", abilityType: "playmaking", abilityStat: 95, color: "#8b73dc" },
   { id: "morris", name: "Jordan Morris", club: "Seattle Sounders FC", position: "FWD", rating: 81, ability: "Speedster · acceleration", abilityType: "pace", abilityStat: 87, color: "#36ad83" },
   { id: "roldan", name: "Cristian Roldan", club: "Seattle Sounders FC", position: "MID", rating: 76, ability: "Engine · work rate", abilityType: "pace", abilityStat: 78, color: "#36ad83" },
   { id: "frei", name: "Stefan Frei", club: "Seattle Sounders FC", position: "GK", rating: 80, ability: "Last line · shot stopping", abilityType: "goalkeeping", abilityStat: 86, color: "#36ad83" },
   { id: "miles", name: "Miles Robinson", club: "FC Cincinnati", position: "DEF", rating: 79, ability: "Recovery · defensive coverage", abilityType: "defending", abilityStat: 84, color: "#ed794a" },
   { id: "moore", name: "DeAndre Yedlin", club: "Inter Miami CF", position: "DEF", rating: 72, ability: "Overlap · recovery pace", abilityType: "pace", abilityStat: 77, color: "#f36b87" },
-  { id: "vela", name: "Carlos Vela", club: "LAFC", position: "FWD", rating: 84, ability: "Curling strike · shot placement", abilityType: "finishing", abilityStat: 87, color: "#f5b942" },
+  { id: "vela", name: "Carlos Vela", club: "LAFC", position: "FWD", rating: 91, ability: "Curling strike · shot placement", abilityType: "finishing", abilityStat: 94, color: "#f5b942" },
   { id: "pec", name: "Gabriel Pec", club: "LA Galaxy", position: "FWD", rating: 83, ability: "Quick feet · close control", abilityType: "dribbling", abilityStat: 86, color: "#8b73dc" },
-  { id: "mukhtar", name: "Hany Mukhtar", club: "Nashville SC", position: "MID", rating: 86, ability: "MVP vision · chance creation", abilityType: "playmaking", abilityStat: 88, color: "#eac84b" },
-  { id: "cucho", name: "Cucho Hernández", club: "Columbus Crew", position: "FWD", rating: 87, ability: "Clinical · finishing", abilityType: "finishing", abilityStat: 88, color: "#f1c94e" },
+  { id: "mukhtar", name: "Hany Mukhtar", club: "Nashville SC", position: "MID", rating: 91, ability: "MVP vision · chance creation", abilityType: "playmaking", abilityStat: 95, color: "#eac84b" },
+  { id: "cucho", name: "Cucho Hernández", club: "Columbus Crew", position: "FWD", rating: 93, ability: "Clinical · finishing", abilityType: "finishing", abilityStat: 94, color: "#f1c94e" },
   { id: "benteke", name: "Christian Benteke", club: "D.C. United", position: "FWD", rating: 82, ability: "Target forward · finishing", abilityType: "finishing", abilityStat: 83, color: "#e4e8df" },
-  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 86, ability: "Wall · shot stopping", abilityType: "goalkeeping", abilityStat: 91, color: "#ef5145" },
+  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 93, ability: "Wall · shot stopping", abilityType: "goalkeeping", abilityStat: 97, color: "#ef5145" },
   { id: "acosta", name: "Luciano Acosta", club: "FC Cincinnati", position: "MID", rating: 87, ability: "Creator · close control", abilityType: "dribbling", abilityStat: 89, color: "#ed794a" },
   { id: "almada", name: "Thiago Almada", club: "Atlanta United", position: "MID", rating: 84, ability: "Quick feet · creative passing", abilityType: "playmaking", abilityStat: 86, color: "#c93642" },
   { id: "evander", name: "Evander", club: "Portland Timbers", position: "MID", rating: 84, ability: "Long-range threat · shot placement", abilityType: "finishing", abilityStat: 85, color: "#37a86c" },
@@ -141,19 +141,71 @@ const startingPlayers = [
   "mls-brady", "mls-fray", "mls-pineda", "mls-tafari", "mls-parker",
   "mls-vassilev", "mls-raposo", "mls-c-araujo", "mls-musovski", "mls-adeniran", "mls-wood",
 ];
-const passPlayerRewards = roster.filter((player) => !startingPlayers.includes(player.id));
 const smallSidedLevel = 10;
 const goldenGoalLevel = 20;
-const battlePassFinalLevel = passPlayerRewards.length + 5;
-const coins250Level = battlePassFinalLevel - 1;
+const battlePassFinalLevel = roster.length - startingPlayers.length + 5;
+const coins250Level = battlePassFinalLevel - 2;
 const coins500Level = battlePassFinalLevel;
+const premiumPlayerRewards: { id: string; level: number }[] = [
+  { id: "mukhtar", level: 21 },
+  { id: "puig", level: 41 },
+  { id: "messi", level: 61 },
+  { id: "bouanga", level: 81 },
+  { id: "vela", level: 101 },
+  { id: "burki", level: 121 },
+  { id: "cucho", level: 141 },
+  { id: "suarez", level: 161 },
+];
+const premiumPlayerIds = new Set(premiumPlayerRewards.map(({ id }) => id));
+const allPassPlayerRewards = roster.filter((player) => !startingPlayers.includes(player.id));
+const overallRating = (player: Player) =>
+  Math.round((player.rating + 2 * player.abilityStat) / 3);
+const abilityContribution = (player: Player, type: AbilityType) =>
+  player.abilityType === type ? player.abilityStat - 50 : 0;
+// Weights fitted to 36,000 fixed-seed synthetic self-play matches.
+const playerBalanceScore = (player: Player) => {
+  const overall = overallRating(player);
+  const finishing = abilityContribution(player, "finishing");
+  const playmaking = abilityContribution(player, "playmaking");
+  const pace = abilityContribution(player, "pace");
+  const defending = abilityContribution(player, "defending");
+  const goalkeeping = abilityContribution(player, "goalkeeping");
+  const offense = player.position === "FWD"
+    ? (0.5 * overall + 0.07 * finishing + 0.025 * pace) / 3
+    : player.position === "MID"
+      ? (0.32 * overall + 0.04 * playmaking) / 3
+      : player.position === "DEF" ? 0.18 * overall / 4 : 0;
+  const defense = player.position === "DEF"
+    ? (0.52 * overall + 0.08 * defending) / 4
+    : player.position === "GK"
+      ? 0.25 * overall + 0.06 * goalkeeping
+      : player.position === "MID" ? 0.23 * overall / 3 : 0;
+  const creation = player.position === "MID"
+    ? 0.08 * playmaking / 3
+    : player.position === "FWD" ? 0.06 * finishing / 3 : 0;
+  return 1.3704 * offense + 0.9339 * defense + 0.0876 * creation;
+};
+const passPlayerRewards = allPassPlayerRewards.filter((player) =>
+  !startingPlayers.includes(player.id) && !premiumPlayerIds.has(player.id),
+).sort((a, b) => playerBalanceScore(a) - playerBalanceScore(b) || a.id.localeCompare(b.id));
 const playerRewardLevels = Array.from({ length: battlePassFinalLevel }, (_, index) => index + 1)
-  .filter((passLevel) => ![1, smallSidedLevel, goldenGoalLevel, coins250Level, coins500Level].includes(passLevel));
+  .filter((passLevel) => ![1, smallSidedLevel, goldenGoalLevel, coins250Level, coins500Level]
+    .includes(passLevel) && !premiumPlayerRewards.some((reward) => reward.level === passLevel));
 const playerUnlocks: Record<string, number> = Object.fromEntries(
-  passPlayerRewards.map((player, index) => [player.id, playerRewardLevels[index]]),
+  [
+    ...passPlayerRewards.map((player, index) => [player.id, playerRewardLevels[index]] as const),
+    ...premiumPlayerRewards.map(({ id, level }) => [id, level] as const),
+  ],
 );
 const playerRewardsByLevel: Record<number, Player> = Object.fromEntries(
-  passPlayerRewards.map((player) => [playerUnlocks[player.id], player]),
+  [
+    ...passPlayerRewards.map((player) => [playerUnlocks[player.id], player] as const),
+    ...premiumPlayerRewards.map(({ id, level }) => {
+      const player = roster.find((entry) => entry.id === id);
+      if (!player) throw new Error(`Missing premium player reward: ${id}`);
+      return [level, player] as const;
+    }),
+  ],
 );
 const formats: { id: FormatId; name: string; detail: string; unlock: number }[] = [
   { id: "classic", name: "Classic 11v11", detail: "Full squad · first to 3 goals", unlock: 1 },
@@ -171,17 +223,17 @@ const selectXI = (players: Player[]) => {
   const slots: Record<Position, number> = { GK: 1, DEF: 4, MID: 3, FWD: 3 };
   const selected = (Object.keys(slots) as Position[]).flatMap((position) =>
     players.filter((player) => player.position === position)
-      .sort((a, b) => b.rating - a.rating)
+      .sort((a, b) => overallRating(b) - overallRating(a))
       .slice(0, slots[position]),
   );
-  return selected.sort((a, b) => positionOrder[a.position] - positionOrder[b.position] || b.rating - a.rating);
+  return selected.sort((a, b) => positionOrder[a.position] - positionOrder[b.position] || overallRating(b) - overallRating(a));
 };
 const selectSmallSidedXI = (players: Player[]) => {
   const selected = (["GK", "MID", "FWD"] as Position[])
-    .map((position) => players.filter((player) => player.position === position).sort((a, b) => b.rating - a.rating)[0])
+    .map((position) => players.filter((player) => player.position === position).sort((a, b) => overallRating(b) - overallRating(a))[0])
     .filter((player): player is Player => !!player);
   return [...selected, ...players.filter((player) => !selected.some((chosen) => chosen.id === player.id))
-    .sort((a, b) => b.rating - a.rating)]
+    .sort((a, b) => overallRating(b) - overallRating(a))]
     .slice(0, 3);
 };
 const playersAvailableAt = (passLevel: number) =>
@@ -202,7 +254,7 @@ const shotRange = (player: Player) =>
 const nutmegChance = (player: Player) =>
   cap(50 + abilityEffect(player, "dribbling") * 0.1, 45, 56);
 const abilityDescription = (player: Player) =>
-  `${player.ability} · Ability ${player.abilityStat} (${player.abilityType})`;
+  `${player.ability} · Ability ${player.abilityStat} ×2 (${player.abilityType}) · OVR ${overallRating(player)}`;
 const displayKey = (code: string | null) => {
   if (!code) return "UNBOUND";
   if (code.startsWith("Key")) return code.slice(3);
@@ -1449,8 +1501,8 @@ function App() {
             <button className="campaign-card" style={{ width: "100%", textAlign: "left", cursor: "pointer" }} onClick={() => setScreen("campaign")}><div><strong>Match {Math.min(level, campaignStageCount)} · {fmt(activeFormat).name}</strong><p>See all {campaignStageCount} levels. Beat each match to unlock the next.</p></div><span className="badge">OPEN MAP →</span></button>
             <div className="small-note">BATTLE PASS · LEVEL {battlePassLevel} OF {battlePassFinalLevel}</div><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div>
             <div className="small-note">{battlePassLevel === battlePassFinalLevel ? "Final level complete" : `${nextLevelXpTarget - xp} XP to Level ${battlePassLevel + 1}`}</div>
-            <div className="panel-heading" style={{ marginTop: 25 }}><h2>Your starting XI</h2><span>{startingXI.length} on field · {homePlayers.length} available · avg {startingXI.length ? Math.round(startingXI.reduce((total, player) => total + player.rating, 0) / startingXI.length) : 0} OVR</span></div>
-            <div className="player-list">{startingXI.map((player) => <div className="player-chip" key={player.id}><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{player.name}</b><small>{player.club} · {player.position}</small></div><span className="rating">{player.rating}</span></div>)}</div>
+            <div className="panel-heading" style={{ marginTop: 25 }}><h2>Your starting XI</h2><span>{startingXI.length} on field · {homePlayers.length} available · avg {startingXI.length ? Math.round(startingXI.reduce((total, player) => total + overallRating(player), 0) / startingXI.length) : 0} OVR</span></div>
+            <div className="player-list">{startingXI.map((player) => <div className="player-chip" key={player.id}><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{player.name}</b><small>{player.club} · {player.position}</small></div><span className="rating">{overallRating(player)}</span></div>)}</div>
           </section>
           <section className="panel">
             <div className="panel-heading"><h2>Season pass</h2><button className="ghost-btn" onClick={() => setScreen("pass")}>VIEW ALL ↗</button></div>
@@ -1520,7 +1572,7 @@ function App() {
       </div>}
 
       {screen === "locker" && <div className="content" style={{ paddingTop: 40 }}>
-        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Players are selected for the first 11 in their listed position. Change a player’s position here to customize your lineup. Ratings and ability stats are game estimates, not official MLS ratings.</p>
+        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Players are selected for the first 11 in their listed position. Change a player’s position here to customize your lineup. OVR weights the ability stat twice: (base rating + 2 × ability) ÷ 3. Ratings are game estimates, not official MLS ratings.</p>
         <div className="panel-heading" style={{ marginTop: 28 }}><h2>Player roster</h2><span>{homePlayers.length} unlocked · {coins} coins</span></div>
         <div className="locker-grid">{roster.map((player) => {
           const unlocked = unlockedPlayers.includes(player.id);
@@ -1528,8 +1580,8 @@ function App() {
           const currentPosition = customPositions[player.id] ?? player.position;
           const isStarter = startingXI.some((starter) => starter.id === player.id);
           return <article key={player.id} className="roster-card">
-            <div className="roster-top"><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><h3>{player.name}</h3><small style={{ color: "#89948b", fontSize: 9 }}>{player.club}</small></div><span className="rating">{player.rating}</span></div>
-            <p>{player.ability} · Ability {player.abilityStat}/100</p>
+            <div className="roster-top"><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><h3>{player.name}</h3><small style={{ color: "#89948b", fontSize: 9 }}>{player.club}</small></div><span className="rating">{overallRating(player)} OVR</span></div>
+            <p>{player.ability} · Ability {player.abilityStat}/100 (weighted ×2)</p>
             <div className="roster-meta"><span>{unlocked ? (isStarter ? "STARTING XI" : "SQUAD") : `PASS LV ${unlockAt}`}</span>
               <select aria-label={`${player.name} position`} value={currentPosition} disabled={!unlocked}
                 onChange={(event) => {
@@ -1591,9 +1643,9 @@ function App() {
       </section>}
 
       {screen === "pass" && <div className="content pass-page">
-        <div className="eyebrow">Earn rewards as you play</div><h1>Season pass</h1><p className="subtitle">Each level takes 1,000 XP. Wins earn 100 XP in regular matches, while campaign wins scale with the stage. Unlock Street 3v3 at Level 10 and Golden Goal at Level 20.</p>
+        <div className="eyebrow">Earn rewards as you play</div><h1>Season pass</h1><p className="subtitle">Each level takes 1,000 XP. Wins earn 100 XP in regular matches, while campaign wins scale with the stage. Unlock Street 3v3 at Level 10 and Golden Goal at Level 20. Sim-tested rewards build in strength, with a 90+ OVR player every 20 levels starting at Level 21.</p>
         <div className="pass-banner"><h2>Level {battlePassLevel} of {battlePassFinalLevel} <span style={{ color: "#b8f36b" }}>·</span> {xp.toLocaleString()} XP</h2><p>{battlePassLevel === battlePassFinalLevel ? "You reached the final level. Your progress is saved on this device." : `${nextLevelXpTarget - xp} XP to reach Level ${battlePassLevel + 1}. Each level requires 1,000 XP.`}</p><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div><div className="small-note">{battlePassLevel === battlePassFinalLevel ? "FINAL LEVEL COMPLETE" : `${xpTowardNextLevel} / ${xpForNextLevel} XP toward Level ${battlePassLevel + 1}`}</div></div>
-        <div className="panel-heading"><h2>Level rewards</h2><span>{passPlayerRewards.length} MLS players · {battlePassFinalLevel} total levels · one reward per level</span></div>
+        <div className="panel-heading"><h2>Level rewards</h2><span>{allPassPlayerRewards.length} MLS players · {battlePassFinalLevel} total levels · one reward per level</span></div>
         <div className="pass-levels">{Array.from({ length: battlePassFinalLevel }, (_, index) => index + 1).map((rewardLevel) => {
           const playerReward = playerRewardsByLevel[rewardLevel];
           const unlocked = battlePassLevel >= rewardLevel;
@@ -1610,7 +1662,7 @@ function App() {
             <p>{rewardLevel === 1
               ? "11-player starting squad · team average capped at 75 OVR"
               : playerReward
-                ? `${playerReward.club} · ${playerReward.position} · ${playerReward.rating} OVR`
+                ? `${playerReward.club} · ${playerReward.position} · ${overallRating(playerReward)} OVR · Ability ${playerReward.abilityStat} ×2`
                 : formatReward?.detail ?? "Campaign coin bonus"}</p>
             <span className="small-note">{requiredXp.toLocaleString()} XP required</span>
             {unlocked ? <span className="badge">LEVEL COMPLETE</span> : <span className="small-note">{(requiredXp - xp).toLocaleString()} XP TO GO</span>}

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
+type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
 type FormatId = "classic" | "small-sided" | "golden-goal";
 type CaptionSize = "small" | "medium" | "large";
 type Player = {
@@ -12,11 +13,9 @@ type Player = {
   position: Position;
   rating: number;
   ability: string;
+  abilityType: AbilityType;
+  abilityStat: number;
   color: string;
-  shotBonus?: number;
-  nutmegBonus?: number;
-  moveBonus?: number;
-  defenseBonus?: number;
 };
 type Token = { player: Player; x: number; y: number; side: "home" | "away" };
 export type Match = {
@@ -41,29 +40,29 @@ export type Match = {
 };
 
 const roster: Player[] = [
-  { id: "messi", name: "Lionel Messi", club: "Inter Miami CF", position: "FWD", rating: 75, ability: "Deadeye · shoots accurately from range", color: "#f36b87", shotBonus: 4, nutmegBonus: 8 },
-  { id: "suarez", name: "Luis Suárez", club: "Inter Miami CF", position: "FWD", rating: 74, ability: "Poacher · bonus close-range finishing", color: "#f36b87", shotBonus: 1 },
-  { id: "alba", name: "Jordi Alba", club: "Inter Miami CF", position: "DEF", rating: 73, ability: "Overlap · one extra tile of movement", color: "#f36b87", moveBonus: 1 },
-  { id: "busquets", name: "Sergio Busquets", club: "Inter Miami CF", position: "MID", rating: 74, ability: "Metronome · reliable ball control", color: "#f36b87", nutmegBonus: 4 },
-  { id: "bouanga", name: "Denis Bouanga", club: "LAFC", position: "FWD", rating: 75, ability: "Rapid · covers extra ground", color: "#f5b942", moveBonus: 2, shotBonus: 1 },
-  { id: "chiellini", name: "Giorgio Chiellini", club: "LAFC", position: "DEF", rating: 72, ability: "Anchor · tight marking lowers nearby shot odds", color: "#f5b942", defenseBonus: 4 },
-  { id: "puig", name: "Riqui Puig", club: "LA Galaxy", position: "MID", rating: 74, ability: "Playmaker · extra movement after a nutmeg", color: "#8b73dc", nutmegBonus: 5, moveBonus: 1 },
-  { id: "morris", name: "Jordan Morris", club: "Seattle Sounders FC", position: "FWD", rating: 85, ability: "Speedster · covers extra ground", color: "#36ad83", moveBonus: 2 },
-  { id: "roldan", name: "Cristian Roldan", club: "Seattle Sounders FC", position: "MID", rating: 72, ability: "Engine · one extra tile of movement", color: "#36ad83", moveBonus: 1 },
-  { id: "frei", name: "Stefan Frei", club: "Seattle Sounders FC", position: "GK", rating: 73, ability: "Last line · improves defensive recovery", color: "#36ad83" },
-  { id: "miles", name: "Miles Robinson", club: "FC Cincinnati", position: "DEF", rating: 73, ability: "Recovery · extra movement and defensive coverage", color: "#ed794a", moveBonus: 1, defenseBonus: 2 },
-  { id: "moore", name: "DeAndre Yedlin", club: "Inter Miami CF", position: "DEF", rating: 71, ability: "Overlap · one extra tile of movement", color: "#f36b87", moveBonus: 1 },
-  { id: "vela", name: "Carlos Vela", club: "LAFC", position: "FWD", rating: 89, ability: "Curling strike · improved long shots", color: "#f5b942", shotBonus: 3 },
-  { id: "pec", name: "Gabriel Pec", club: "LA Galaxy", position: "FWD", rating: 86, ability: "Quick feet · improved nutmeg odds", color: "#8b73dc", nutmegBonus: 10, moveBonus: 1 },
-  { id: "mukhtar", name: "Hany Mukhtar", club: "Nashville SC", position: "MID", rating: 90, ability: "MVP vision · accurate shots from midfield", color: "#eac84b", shotBonus: 2, nutmegBonus: 5 },
-  { id: "cucho", name: "Cucho Hernández", club: "Columbus Crew", position: "FWD", rating: 91, ability: "Clinical · improves finishing in range", color: "#f1c94e", shotBonus: 2 },
-  { id: "benteke", name: "Christian Benteke", club: "D.C. United", position: "FWD", rating: 89, ability: "Power header · stronger finishing up close", color: "#e4e8df", shotBonus: 2 },
-  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 89, ability: "Wall · raises your defense's recovery", color: "#ef5145" },
-  { id: "acosta", name: "Luciano Acosta", club: "FC Cincinnati", position: "MID", rating: 91, ability: "Creator · exceptional nutmeg odds", color: "#ed794a", nutmegBonus: 12 },
-  { id: "almada", name: "Thiago Almada", club: "Atlanta United", position: "MID", rating: 90, ability: "Quick feet · extra movement and close control", color: "#c93642", moveBonus: 1, nutmegBonus: 7 },
-  { id: "evander", name: "Evander", club: "Portland Timbers", position: "MID", rating: 89, ability: "Long-range threat · extends shooting distance", color: "#37a86c", shotBonus: 3 },
-  { id: "insigne", name: "Lorenzo Insigne", club: "Toronto FC", position: "FWD", rating: 89, ability: "Curling finish · precise shots from wide angles", color: "#d84248", shotBonus: 3 },
-  { id: "dreyer", name: "Anders Dreyer", club: "San Diego FC", position: "FWD", rating: 88, ability: "Quick feet · creates space for shots", color: "#59b9aa", nutmegBonus: 8, moveBonus: 1 },
+  { id: "messi", name: "Lionel Messi", club: "Inter Miami CF", position: "FWD", rating: 91, ability: "Deadeye · elite close control", abilityType: "dribbling", abilityStat: 96, color: "#f36b87" },
+  { id: "suarez", name: "Luis Suárez", club: "Inter Miami CF", position: "FWD", rating: 84, ability: "Poacher · sharp finishing", abilityType: "finishing", abilityStat: 88, color: "#f36b87" },
+  { id: "alba", name: "Jordi Alba", club: "Inter Miami CF", position: "DEF", rating: 82, ability: "Overlap · pace on the flank", abilityType: "pace", abilityStat: 84, color: "#f36b87" },
+  { id: "busquets", name: "Sergio Busquets", club: "Inter Miami CF", position: "MID", rating: 81, ability: "Metronome · passing range", abilityType: "playmaking", abilityStat: 89, color: "#f36b87" },
+  { id: "bouanga", name: "Denis Bouanga", club: "LAFC", position: "FWD", rating: 88, ability: "Rapid · attacking pace", abilityType: "pace", abilityStat: 88, color: "#f5b942" },
+  { id: "chiellini", name: "Giorgio Chiellini", club: "LAFC", position: "DEF", rating: 77, ability: "Anchor · defensive positioning", abilityType: "defending", abilityStat: 81, color: "#f5b942" },
+  { id: "puig", name: "Riqui Puig", club: "LA Galaxy", position: "MID", rating: 85, ability: "Playmaker · progressive passing", abilityType: "playmaking", abilityStat: 88, color: "#8b73dc" },
+  { id: "morris", name: "Jordan Morris", club: "Seattle Sounders FC", position: "FWD", rating: 81, ability: "Speedster · acceleration", abilityType: "pace", abilityStat: 87, color: "#36ad83" },
+  { id: "roldan", name: "Cristian Roldan", club: "Seattle Sounders FC", position: "MID", rating: 76, ability: "Engine · work rate", abilityType: "pace", abilityStat: 78, color: "#36ad83" },
+  { id: "frei", name: "Stefan Frei", club: "Seattle Sounders FC", position: "GK", rating: 80, ability: "Last line · shot stopping", abilityType: "goalkeeping", abilityStat: 86, color: "#36ad83" },
+  { id: "miles", name: "Miles Robinson", club: "FC Cincinnati", position: "DEF", rating: 79, ability: "Recovery · defensive coverage", abilityType: "defending", abilityStat: 84, color: "#ed794a" },
+  { id: "moore", name: "DeAndre Yedlin", club: "Inter Miami CF", position: "DEF", rating: 72, ability: "Overlap · recovery pace", abilityType: "pace", abilityStat: 77, color: "#f36b87" },
+  { id: "vela", name: "Carlos Vela", club: "LAFC", position: "FWD", rating: 84, ability: "Curling strike · shot placement", abilityType: "finishing", abilityStat: 87, color: "#f5b942" },
+  { id: "pec", name: "Gabriel Pec", club: "LA Galaxy", position: "FWD", rating: 83, ability: "Quick feet · close control", abilityType: "dribbling", abilityStat: 86, color: "#8b73dc" },
+  { id: "mukhtar", name: "Hany Mukhtar", club: "Nashville SC", position: "MID", rating: 86, ability: "MVP vision · chance creation", abilityType: "playmaking", abilityStat: 88, color: "#eac84b" },
+  { id: "cucho", name: "Cucho Hernández", club: "Columbus Crew", position: "FWD", rating: 87, ability: "Clinical · finishing", abilityType: "finishing", abilityStat: 88, color: "#f1c94e" },
+  { id: "benteke", name: "Christian Benteke", club: "D.C. United", position: "FWD", rating: 82, ability: "Target forward · finishing", abilityType: "finishing", abilityStat: 83, color: "#e4e8df" },
+  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 86, ability: "Wall · shot stopping", abilityType: "goalkeeping", abilityStat: 91, color: "#ef5145" },
+  { id: "acosta", name: "Luciano Acosta", club: "FC Cincinnati", position: "MID", rating: 87, ability: "Creator · close control", abilityType: "dribbling", abilityStat: 89, color: "#ed794a" },
+  { id: "almada", name: "Thiago Almada", club: "Atlanta United", position: "MID", rating: 84, ability: "Quick feet · creative passing", abilityType: "playmaking", abilityStat: 86, color: "#c93642" },
+  { id: "evander", name: "Evander", club: "Portland Timbers", position: "MID", rating: 84, ability: "Long-range threat · shot placement", abilityType: "finishing", abilityStat: 85, color: "#37a86c" },
+  { id: "insigne", name: "Lorenzo Insigne", club: "Toronto FC", position: "FWD", rating: 80, ability: "Curling finish · shot placement", abilityType: "finishing", abilityStat: 84, color: "#d84248" },
+  { id: "dreyer", name: "Anders Dreyer", club: "San Diego FC", position: "FWD", rating: 85, ability: "Quick feet · attacking movement", abilityType: "dribbling", abilityStat: 85, color: "#59b9aa" },
 ];
 
 const additionalMlsPlayers: [string, string, string, Position][] = [
@@ -98,50 +97,73 @@ const additionalMlsPlayers: [string, string, string, Position][] = [
   ["lozano", "Hirving Lozano", "San Diego FC", "FWD"], ["deLaTorre", "Luca de la Torre", "San Diego FC", "MID"], ["mcnair", "Paddy McNair", "San Diego FC", "DEF"], ["mcvey", "Christopher McVey", "San Diego FC", "DEF"], ["yaro", "Oscar Verhoeven", "San Diego FC", "DEF"],
 ];
 const mlsColors = ["#4c91c5", "#e36c51", "#8e79d6", "#43a987", "#d0a33d", "#43a9bb"];
+const ratingOverrides: Record<string, number> = {
+  brady: 56, fray: 55, pineda: 57, tafari: 58, parker: 58, vassilev: 56, raposo: 55,
+  "c-araujo": 57, musovski: 58, adeniran: 55, wood: 54,
+  miranchuk: 83, driussi: 82, abada: 79, cuypers: 80, shaqiri: 78,
+  mihailovic: 82, nagbe: 81, rossi: 81, celentano: 80, ferreira: 79,
+  paes: 80, carrasquilla: 82, gil: 84, giroud: 79, reus: 82, pukki: 78,
+  forsberg: 82, gazdag: 80, blake: 83, espinoza: 82, russell: 78,
+  gallese: 81, muriel: 79, llorris: 82, white: 79, gauld: 82,
+};
 const additionalRoster: Player[] = additionalMlsPlayers.map(([id, name, club, position], index) => {
   const color = mlsColors[index % mlsColors.length];
   const ability = position === "GK"
-    ? "Shot stopper · improves saves and defensive recovery"
+    ? "Shot stopping"
     : position === "DEF"
-      ? "Back line · stronger chance to intercept and steal"
+      ? "Defensive positioning"
       : position === "MID"
-        ? "Playmaker · extra control and passing vision"
-        : "Finisher · improves shooting inside range";
+        ? "Passing and ball progression"
+        : "Finishing";
+  const abilityType: AbilityType = position === "GK"
+    ? "goalkeeping"
+    : position === "DEF"
+      ? "defending"
+      : position === "MID"
+        ? "playmaking"
+        : "finishing";
+  const rating = ratingOverrides[id] ?? 54 + ((index * 7) % 27);
   return {
     id: `mls-${id}`,
     name,
     club,
     position,
-    rating: 76 + ((index * 7) % 21),
+    rating,
     ability,
+    abilityType,
+    abilityStat: Math.max(42, Math.min(91, rating + ((index * 13) % 9) - 4)),
     color,
-    ...(position === "GK" || position === "DEF" ? { defenseBonus: 1 + (index % 4) } : {}),
-    ...(position === "FWD" ? { shotBonus: 1 + (index % 4) } : {}),
-    ...(position === "MID" ? { nutmegBonus: 2 + (index % 8) } : {}),
-    ...(index % 9 === 0 ? { moveBonus: 1 } : {}),
   };
 });
 roster.push(...additionalRoster);
 
-const startingPlayers = ["messi", "suarez", "alba", "busquets", "bouanga", "chiellini", "puig", "roldan", "frei", "miles", "moore"];
+const startingPlayers = [
+  "mls-brady", "mls-fray", "mls-pineda", "mls-tafari", "mls-parker",
+  "mls-vassilev", "mls-raposo", "mls-c-araujo", "mls-musovski", "mls-adeniran", "mls-wood",
+];
 const passPlayerRewards = roster.filter((player) => !startingPlayers.includes(player.id));
+const smallSidedLevel = 10;
+const goldenGoalLevel = 20;
+const battlePassFinalLevel = passPlayerRewards.length + 5;
+const coins250Level = battlePassFinalLevel - 1;
+const coins500Level = battlePassFinalLevel;
+const playerRewardLevels = Array.from({ length: battlePassFinalLevel }, (_, index) => index + 1)
+  .filter((passLevel) => ![1, smallSidedLevel, goldenGoalLevel, coins250Level, coins500Level].includes(passLevel));
 const playerUnlocks: Record<string, number> = Object.fromEntries(
-  passPlayerRewards.map((player, index) => [player.id, index + 2]),
+  passPlayerRewards.map((player, index) => [player.id, playerRewardLevels[index]]),
 );
-const smallSidedLevel = passPlayerRewards.length + 2;
-const goldenGoalLevel = passPlayerRewards.length + 3;
-const coins250Level = passPlayerRewards.length + 4;
-const coins500Level = passPlayerRewards.length + 5;
+const playerRewardsByLevel: Record<number, Player> = Object.fromEntries(
+  passPlayerRewards.map((player) => [playerUnlocks[player.id], player]),
+);
 const formats: { id: FormatId; name: string; detail: string; unlock: number }[] = [
   { id: "classic", name: "Classic 11v11", detail: "Full squad · first to 3 goals", unlock: 1 },
   { id: "small-sided", name: "Street 3v3", detail: "Fast, open play · first to 2 goals", unlock: smallSidedLevel },
   { id: "golden-goal", name: "Golden Goal", detail: "One goal wins · sudden death", unlock: goldenGoalLevel },
 ];
-const battlePassFinalLevel = coins500Level;
-const winsRequiredForPassLevel = (passLevel: number) => passLevel < 2 ? 0 : (passLevel * (passLevel + 1)) / 2 - 1;
-const passLevelForWins = (wins: number) => {
+const xpRequiredForPassLevel = (passLevel: number) => Math.max(0, (passLevel - 1) * 1000);
+const passLevelForXp = (xp: number) => {
   let passLevel = 1;
-  while (passLevel < battlePassFinalLevel && wins >= winsRequiredForPassLevel(passLevel + 1)) passLevel += 1;
+  while (passLevel < battlePassFinalLevel && xp >= xpRequiredForPassLevel(passLevel + 1)) passLevel += 1;
   return passLevel;
 };
 const positionOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
@@ -152,10 +174,15 @@ const selectXI = (players: Player[]) => {
       .sort((a, b) => b.rating - a.rating)
       .slice(0, slots[position]),
   );
-  const selectedIds = new Set(selected.map((player) => player.id));
-  const filled = [...selected, ...players.filter((player) => !selectedIds.has(player.id))
-    .sort((a, b) => b.rating - a.rating).slice(0, 11 - selected.length)];
-  return filled.sort((a, b) => positionOrder[a.position] - positionOrder[b.position] || b.rating - a.rating);
+  return selected.sort((a, b) => positionOrder[a.position] - positionOrder[b.position] || b.rating - a.rating);
+};
+const selectSmallSidedXI = (players: Player[]) => {
+  const selected = (["GK", "MID", "FWD"] as Position[])
+    .map((position) => players.filter((player) => player.position === position).sort((a, b) => b.rating - a.rating)[0])
+    .filter((player): player is Player => !!player);
+  return [...selected, ...players.filter((player) => !selected.some((chosen) => chosen.id === player.id))
+    .sort((a, b) => b.rating - a.rating)]
+    .slice(0, 3);
 };
 const playersAvailableAt = (passLevel: number) =>
   [...startingPlayers, ...Object.entries(playerUnlocks).filter(([, requiredLevel]) => passLevel >= requiredLevel).map(([id]) => id)];
@@ -164,16 +191,35 @@ const fmt = (id: FormatId) => formats.find((format) => format.id === id) ?? form
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }) =>
   Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const cap = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const abilityEffect = (player: Player, type: AbilityType) =>
+  player.abilityType === type ? player.abilityStat - 50 : 0;
+const movementBonus = (player: Player) =>
+  player.abilityType === "pace" && player.abilityStat >= 85 ? 1 : 0;
+const passingBonus = (player: Player) =>
+  player.abilityType === "playmaking" && player.abilityStat >= 85 ? 1 : 0;
+const shotRange = (player: Player) =>
+  7 + (player.abilityType === "finishing" && player.abilityStat >= 90 ? 1 : 0);
+const nutmegChance = (player: Player) =>
+  cap(50 + abilityEffect(player, "dribbling") * 0.1, 45, 56);
+const abilityDescription = (player: Player) =>
+  `${player.ability} · Ability ${player.abilityStat} (${player.abilityType})`;
+const displayKey = (code: string | null) => {
+  if (!code) return "UNBOUND";
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code === "NumpadEnter") return "NUM ENTER";
+  return code.replace(/([A-Z])/g, " $1").trim().toUpperCase();
+};
 const goalkeeperPenalty = (tokens: Token[], attackingSide: "home" | "away") => {
   const keeper = tokens.find((token) => token.side !== attackingSide && token.player.position === "GK");
-  return keeper ? cap(Math.round((keeper.player.rating - 75) / 2), 0, 10) : 0;
+  return keeper ? cap(Math.round(abilityEffect(keeper.player, "goalkeeping") * 0.12), 0, 5) : 0;
 };
 const defenderPenalty = (tokens: Token[], attacker: Token) => {
   const marker = tokens.filter((token) => token.side !== attacker.side && token.player.position === "DEF")
     .sort((a, b) => distance(attacker, a) - distance(attacker, b))[0];
   if (!marker) return 0;
   const gap = distance(attacker, marker);
-  return gap <= 2 ? cap((marker.player.defenseBonus ?? 0) + (2 - gap) * 2, 0, 10) : 0;
+  return gap <= 2 ? cap(abilityEffect(marker.player, "defending") * 0.08 + (2 - gap) * 2, 0, 6) : 0;
 };
 const shotAngleDegrees = (player: Token, half: 1 | 2) => {
   const goalX = player.side === "home" ? (half === 1 ? 21 : 0) : (half === 1 ? 0 : 21);
@@ -181,7 +227,7 @@ const shotAngleDegrees = (player: Token, half: 1 | 2) => {
 };
 const shotAccuracy = (player: Token, tokens: Token[], tilesToGoal: number, angleDegrees: number) =>
   cap(
-    86 - tilesToGoal * 8 + (player.player.shotBonus ?? 0) * 4
+    86 - tilesToGoal * 8 + abilityEffect(player.player, "finishing") * 0.08
       + (player.player.position === "FWD" ? 5 : 0)
       - angleDegrees * 0.65
       - goalkeeperPenalty(tokens, player.side)
@@ -190,19 +236,20 @@ const shotAccuracy = (player: Token, tokens: Token[], tilesToGoal: number, angle
     94,
   );
 const interceptionChance = (defender: Token, type: "shot" | "pass", laneGap = 0) =>
-  cap(14 + (defender.player.defenseBonus ?? 0) * 7
-    + (defender.player.position === "DEF" ? 16 : 0)
-    + (defender.player.position === "GK" ? 24 : 0)
-    + (type === "shot" ? 8 : 0) - laneGap * 14, 8, 88);
+  cap(14 + abilityEffect(defender.player, "defending") * 0.08
+    + abilityEffect(defender.player, "goalkeeping") * 0.08
+    + (defender.player.position === "DEF" ? 10 : 0)
+    + (defender.player.position === "GK" ? 15 : 0)
+    + (type === "shot" ? 5 : 0) - laneGap * 14, 8, 68);
 const stealChanceFor = (defender: Token, carrier: Token, half: 1 | 2 = 1) => {
   const carrierAttackDirection = carrier.side === "home" ? (half === 1 ? 1 : -1) : (half === 1 ? -1 : 1);
   const relativePosition = (defender.x - carrier.x) * carrierAttackDirection;
   const isBehind = relativePosition < 0;
   const isInFront = relativePosition > 0;
-  return cap(50 + (defender.player.defenseBonus ?? 0) * 3
-    + (defender.player.position === "DEF" ? 10 : 0)
-    + (isInFront ? 18 : 0)
-    - (isBehind ? 28 : 0), 12, 85);
+  return cap(45 + abilityEffect(defender.player, "defending") * 0.08
+    + (defender.player.position === "DEF" ? 6 : 0)
+    + (isInFront ? 8 : 0)
+    - (isBehind ? 14 : 0), 15, 70);
 };
 const lineCells = (from: { x: number; y: number }, to: { x: number; y: number }) => {
   const points: { x: number; y: number }[] = [];
@@ -367,11 +414,20 @@ const ownGoalDistance = (player: Token, half: 1 | 2 = 1) => {
   const goalX = player.side === "home" ? (half === 1 ? 21 : 0) : (half === 1 ? 0 : 21);
   return Math.abs(goalX - player.x);
 };
-const campaignStageCount = 15;
+const campaignStageCount = 55;
 const campaignStageNames = [
   "Season Opener", "Rivalry Match", "Road Test", "Cup Qualifier", "Playoff Push",
   "Tactical Trial", "Derby Day", "Quarterfinal", "Semifinal", "Conference Final",
   "All-Star Challenge", "Championship Match", "Continental Clash", "Elite Showdown", "Final",
+  "New Season Kickoff", "Home Stand", "Away Day", "The Pressing Test", "Midfield Battle",
+  "Counterattack Cup", "Clean Sheet Challenge", "Crossing Course", "The Long Road", "Capital Derby",
+  "Coastal Clash", "Mountain Match", "Rivalry Rematch", "Cup Round of 16", "Cup Quarterfinal",
+  "Cup Semifinal", "Cup Final", "Playoff Round One", "Playoff Quarterfinal", "Playoff Semifinal",
+  "Conference Championship", "League Showcase", "All-Star Rematch", "Continental Round of 16",
+  "Continental Quarterfinal", "Continental Semifinal", "Continental Final", "Road to the Shield",
+  "Supporters' Shield Match", "The Tactical Gauntlet", "High-Pressure Test", "Extra-Time Trial",
+  "Golden Goal Challenge", "Rivalry Decider", "Promotion Push", "Top-Four Showdown",
+  "Final Four", "National Cup Final", "Champions' Night", "Blitz League Final",
 ];
 const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, carrierId: string, half: 1 | 2 = 1) => {
   const direction = Math.sign(toX - fromX);
@@ -429,11 +485,18 @@ const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, car
   return updated;
 };
 
-function makeMatch(away: Player[], level: number, format: FormatId, unlocked = startingPlayers): Match {
-  const home = selectXI(unlocked.map((id) => roster.find((player) => player.id === id)).filter((player): player is Player => !!player));
-  const homeXI = format === "small-sided" ? [home[0], home[6], home[8]] : home;
+function makeMatch(
+  away: Player[],
+  level: number,
+  format: FormatId,
+  homeRoster: Player[] = roster.filter((player) => startingPlayers.includes(player.id)),
+): Match {
+  const home = selectXI(homeRoster);
+  const homeXI = format === "small-sided" ? selectSmallSidedXI(homeRoster) : home;
   const opponentsXI = selectXI(away.length ? away : roster);
-  const opponents = format === "small-sided" ? [opponentsXI[0], opponentsXI[6], opponentsXI[8]] : opponentsXI;
+  const opponents = format === "small-sided"
+    ? selectSmallSidedXI(away.length ? away : roster)
+    : opponentsXI;
   const homeStarts: [number, number][] = format === "small-sided"
     ? [[2, 5], [6, 3], [6, 7]]
     : [[1, 5], [4, 1], [4, 4], [4, 6], [4, 9], [7, 2], [7, 5], [7, 8], [10, 2], [10, 5], [10, 8]];
@@ -468,6 +531,7 @@ function App() {
   const [xp, setXp] = useState(0);
   const [coins, setCoins] = useState(120);
   const [unlockedPlayers, setUnlockedPlayers] = useState<string[]>(startingPlayers);
+  const [customPositions, setCustomPositions] = useState<Partial<Record<string, Position>>>({});
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "quickplay" | "settings">("home");
   const [level, setLevel] = useState(1);
@@ -481,20 +545,25 @@ function App() {
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [captionSize, setCaptionSize] = useState<CaptionSize>("small");
   const [captionText, setCaptionText] = useState("");
-  const [enterEndsTurn, setEnterEndsTurn] = useState(true);
+  const [endTurnKey, setEndTurnKey] = useState<string | null>("Enter");
+  const [capturingEndTurnKey, setCapturingEndTurnKey] = useState(false);
   const latestMatch = useRef(match);
   const lastCaptionMessage = useRef(match.message);
   const captionTimer = useRef<number | undefined>(undefined);
-  const battlePassLevel = passLevelForWins(xp);
-  const currentLevelWinStart = winsRequiredForPassLevel(battlePassLevel);
-  const nextLevelWinTarget = winsRequiredForPassLevel(battlePassLevel + 1);
-  const winsTowardNextLevel = xp - currentLevelWinStart;
-  const winsForNextLevel = nextLevelWinTarget - currentLevelWinStart;
+  const battlePassLevel = passLevelForXp(xp);
+  const currentLevelXpStart = xpRequiredForPassLevel(battlePassLevel);
+  const nextLevelXpTarget = xpRequiredForPassLevel(battlePassLevel + 1);
+  const xpTowardNextLevel = xp - currentLevelXpStart;
+  const xpForNextLevel = nextLevelXpTarget - currentLevelXpStart;
   const passProgress = battlePassLevel >= battlePassFinalLevel
     ? 100
-    : Math.min(100, (winsTowardNextLevel / winsForNextLevel) * 100);
+    : Math.min(100, (xpTowardNextLevel / xpForNextLevel) * 100);
 
-  const homePlayers = useMemo(() => roster.filter((p) => unlockedPlayers.includes(p.id)), [unlockedPlayers]);
+  const homePlayers = useMemo(() => roster
+    .filter((player) => unlockedPlayers.includes(player.id))
+    .map((player) => customPositions[player.id] && customPositions[player.id] !== player.position
+      ? { ...player, position: customPositions[player.id]! }
+      : player), [unlockedPlayers, customPositions]);
   const startingXI = useMemo(() => selectXI(homePlayers), [homePlayers]);
   const awayPlayers = useMemo(() => {
     const aiTier = Math.floor((level - 1) / 1.5);
@@ -512,18 +581,28 @@ function App() {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; coins?: number; unlockedPlayers?: string[]; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; enterEndsTurn?: boolean };
-        if (typeof data.xp === "number") {
-          setXp(data.xp);
-          setUnlockedPlayers(playersAvailableAt(passLevelForWins(data.xp)));
+        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; customPositions?: Record<string, Position>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        const loadedXp = typeof data.xp === "number" && Number.isFinite(data.xp)
+          ? Math.max(0, Math.floor(data.progressionVersion === 2 ? data.xp : data.xp * 100))
+          : 0;
+        if (typeof data.xp === "number" && Number.isFinite(data.xp)) {
+          setXp(loadedXp);
+          setUnlockedPlayers(playersAvailableAt(passLevelForXp(loadedXp)));
+        }
+        if (data.customPositions && typeof data.customPositions === "object") {
+          const validPositions = Object.fromEntries(Object.entries(data.customPositions)
+            .filter(([id, position]) => roster.some((player) => player.id === id)
+              && ["FWD", "MID", "DEF", "GK"].includes(position))) as Partial<Record<string, Position>>;
+          setCustomPositions(validPositions);
         }
         if (typeof data.coins === "number") setCoins(data.coins);
         if (data.activeFormat && formats.some((f) => f.id === data.activeFormat
-          && f.unlock <= passLevelForWins(data.xp ?? 0))) setActiveFormat(data.activeFormat);
+          && f.unlock <= passLevelForXp(loadedXp))) setActiveFormat(data.activeFormat);
         if (typeof data.level === "number") setLevel(data.level);
         if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
         if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
-        if (typeof data.enterEndsTurn === "boolean") setEnterEndsTurn(data.enterEndsTurn);
+        if (typeof data.endTurnKey === "string" || data.endTurnKey === null) setEndTurnKey(data.endTurnKey);
+        else if (data.enterEndsTurn === false) setEndTurnKey(null);
       }
     } catch {
       setNotice("Could not load saved progress. You can still play; progress will save again.");
@@ -534,8 +613,10 @@ function App() {
 
   useEffect(() => {
     if (!saveReady) return;
-    window.localStorage.setItem("blitz-league-save", JSON.stringify({ xp, coins, unlockedPlayers, activeFormat, level, captionsEnabled, captionSize, enterEndsTurn }));
-  }, [xp, coins, unlockedPlayers, activeFormat, level, captionsEnabled, captionSize, enterEndsTurn, saveReady]);
+    window.localStorage.setItem("blitz-league-save", JSON.stringify({
+      xp, progressionVersion: 2, coins, unlockedPlayers, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey,
+    }));
+  }, [xp, coins, unlockedPlayers, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady]);
 
   useEffect(() => {
     latestMatch.current = match;
@@ -600,8 +681,8 @@ function App() {
 
   function startLocalQuickplay() {
     setPassMode(false);
-    const localXI = selectXI(unlockedPlayers.map((id) => roster.find((player) => player.id === id)).filter((player): player is Player => !!player));
-    const initial = makeMatch(localXI, level, "classic", unlockedPlayers);
+    const localXI = selectXI(homePlayers);
+    const initial = makeMatch(localXI, level, "classic", homePlayers);
     initial.message = "Local Quickplay · Home kicks off. Both teams have the same lineup. Take turns on this screen and pass the device after each turn.";
     setQuickplaySide("home");
     setQuickplayMode("local");
@@ -611,7 +692,7 @@ function App() {
 
   function startCpuQuickplay() {
     setPassMode(false);
-    const initial = makeMatch(awayPlayers, level, "classic", unlockedPlayers);
+    const initial = makeMatch(awayPlayers, level, "classic", homePlayers);
     initial.message = "CPU Quickplay · You control the home team. Select a player, then choose a highlighted tile to move.";
     setQuickplaySide(null);
     setQuickplayMode("cpu");
@@ -627,7 +708,7 @@ function App() {
     const stageOpponentXI = selectXI(roster.filter((player) =>
       startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= stageAiTier,
     ));
-    setMatch(makeMatch(stageOpponentXI, nextLevel, activeFormat, unlockedPlayers));
+    setMatch(makeMatch(stageOpponentXI, nextLevel, activeFormat, homePlayers));
     setScreen("match");
   }
 
@@ -741,7 +822,7 @@ function App() {
           x: approachX,
           y: index + 2,
         })));
-        const moveDistance = 2 + (owner.player.moveBonus ?? 0);
+        const moveDistance = 2 + movementBonus(owner.player);
         const next = route[Math.min(moveDistance, route.length) - 1];
         if (next) {
           const previousBallX = ai.ball.x;
@@ -787,7 +868,7 @@ function App() {
             { x: carrier.x, y: carrier.y + 1 }, { x: carrier.x + 1, y: carrier.y + 1 },
           ];
           const route = findRouteToTargets(ai.tokens, presser, pressureTargets);
-          const moveDistance = 2 + (presser.player.moveBonus ?? 0);
+          const moveDistance = 2 + movementBonus(presser.player);
           const next = route[Math.min(moveDistance, route.length) - 1];
           if (next) {
             presser.x = next.x;
@@ -806,7 +887,7 @@ function App() {
           && (!nearestHome || distance(nearestAway, ai.ball) < distance(nearestHome, ai.ball))
           && !ai.tokens.some((token) => token.x === ai.ball.x && token.y === ai.ball.y)) {
           const route = findRouteToTargets(ai.tokens, nearestAway, [ai.ball]);
-          const moveDistance = 2 + (nearestAway.player.moveBonus ?? 0);
+          const moveDistance = 2 + movementBonus(nearestAway.player);
           const next = route[Math.min(moveDistance, route.length) - 1];
           if (next) {
             nearestAway.x = next.x;
@@ -840,20 +921,23 @@ function App() {
     if (fullTime || state.score[0] >= goalTarget || state.score[1] >= goalTarget) {
       const won = state.score[0] > state.score[1];
       const tied = state.score[0] === state.score[1];
+      const xpReward = quickplayMode === null ? 100 * state.campaignStage : 100;
       state.message = won
-        ? `${fullTime ? "Full time!" : "Victory!"} You win ${state.score[0]}–${state.score[1]}${quickplayMode === null ? ` · +${30 + state.campaignStage * 5} coins` : ""}.`
+        ? `${fullTime ? "Full time!" : "Victory!"} You win ${state.score[0]}–${state.score[1]} · +${xpReward} XP${quickplayMode === null ? ` · +${30 + state.campaignStage * 5} coins` : ""}.`
         : tied
           ? `Full time! The match ends level at ${state.score[0]}–${state.score[1]}.`
           : `${fullTime ? "Full time!" : "Match over."} The opposition wins ${state.score[0]}–${state.score[1]}.`;
-      if (won && quickplayMode === null) {
-        const nextXp = xp + 1;
-        const nextPassLevel = passLevelForWins(nextXp);
+      if (won) {
+        const nextXp = xp + xpReward;
+        const nextPassLevel = passLevelForXp(nextXp);
         setXp(nextXp);
         setUnlockedPlayers(playersAvailableAt(nextPassLevel));
-        if (state.campaignStage === level) setLevel((value) => value + 1);
-        setCoins((value) => value + 30 + state.campaignStage * 5);
-        if (nextPassLevel > battlePassLevel && nextPassLevel === coins250Level) setCoins((value) => value + 250);
-        if (nextPassLevel > battlePassLevel && nextPassLevel === coins500Level) setCoins((value) => value + 500);
+        if (quickplayMode === null) {
+          if (state.campaignStage === level) setLevel((value) => value + 1);
+          setCoins((value) => value + 30 + state.campaignStage * 5);
+        }
+        if (battlePassLevel < coins250Level && nextPassLevel >= coins250Level) setCoins((value) => value + 250);
+        if (battlePassLevel < coins500Level && nextPassLevel >= coins500Level) setCoins((value) => value + 500);
       }
       setPassMode(false);
       setScreen("victory");
@@ -887,7 +971,7 @@ function App() {
     }
     const steps = distance(player, { x, y });
     const hasBall = match.ball.x === player.x && match.ball.y === player.y;
-    const maxSteps = 2 + (player.player.moveBonus ?? 0);
+    const maxSteps = 2 + movementBonus(player.player);
     if (steps > maxSteps) {
       setMatch({ ...match, message: `${player.player.name} can move up to ${maxSteps} tiles this turn.` });
       return;
@@ -932,7 +1016,7 @@ function App() {
       return;
     }
     const dist = ownGoalDistance(player, match.half);
-    const range = 7 + (player.player.shotBonus ?? 0);
+    const range = shotRange(player.player);
     if (dist > range) {
       setMatch({ ...match, message: `${player.player.name} is too far out. Max range: ${range} tiles.` });
       return;
@@ -1027,7 +1111,7 @@ function App() {
       setMatch({ ...match, message: "Your action is used. Complete your drive or end the turn." });
       return;
     }
-    const passRange = 2 + (player.player.moveBonus ?? 0) + 2;
+    const passRange = 2 + movementBonus(player.player) + 2 + passingBonus(player.player);
     const receivers = match.tokens.filter((token) =>
       token.side === player.side
       && token.player.id !== player.player.id
@@ -1053,7 +1137,7 @@ function App() {
       setMatch({ ...match, message: "That pass is no longer available. Select the ball carrier and try again." });
       return;
     }
-    const passRange = 2 + (player.player.moveBonus ?? 0) + 2;
+    const passRange = 2 + movementBonus(player.player) + 2 + passingBonus(player.player);
     if (distance(player, receiver) > passRange) {
       setPassMode(false);
       setMatch({ ...match, message: `That teammate is outside passing range (${passRange} tiles).` });
@@ -1150,7 +1234,7 @@ function App() {
       || match.tokens.some((t) => t.x === behindX && t.y === behindY);
     const nx = behindBlocked ? defender.x : behindX;
     const ny = behindBlocked ? defender.y : behindY;
-    const chance = cap(50 + (player.player.nutmegBonus ?? 0), 20, 80);
+    const chance = nutmegChance(player.player);
     const success = Math.random() * 100 < chance;
     if (success) {
       let updated = {
@@ -1210,7 +1294,7 @@ function App() {
       return;
     }
     if (token?.side === activeSide && match.turn === activeSide && !match.finished) {
-      setMatch({ ...match, selected: token.player.id, message: `${token.player.name} · ${token.player.ability}` });
+      setMatch({ ...match, selected: token.player.id, message: abilityDescription(token.player) });
       return;
     }
     if (!token && ownTurn) {
@@ -1221,8 +1305,8 @@ function App() {
   const selectedPlayer = match.tokens.find((t) => t.player.id === match.selected);
   const activeSide = quickplaySide !== null ? match.turn : "home";
   const ownTurn = match.turn === activeSide && !match.finished && !match.halftime;
-  const movementRange = selectedPlayer ? 2 + (selectedPlayer.player.moveBonus ?? 0) : 0;
-  const passingRange = movementRange + 2;
+  const movementRange = selectedPlayer ? 2 + movementBonus(selectedPlayer.player) : 0;
+  const passingRange = movementRange + 2 + (selectedPlayer ? passingBonus(selectedPlayer.player) : 0);
   const eligiblePassIds = new Set(
     selectedPlayer && ownTurn && selectedPlayer.side === activeSide
       && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y
@@ -1249,7 +1333,7 @@ function App() {
   const pitchCameraX = selectedPlayer ? cap((selectedPlayer.x / 21) * 100 - 35.714, 0, 28.572) : 0;
   const pitchCameraY = selectedPlayer ? cap((selectedPlayer.y / 10) * 100 - 35.714, 0, 28.572) : 14.286;
   const canAct = match.actionsUsed < 1 + match.bonusActions;
-  const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= 7 + (selectedPlayer.player.shotBonus ?? 0);
+  const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= shotRange(selectedPlayer.player);
   const nutmegDefender = selectedPlayer && canAct
     && selectedPlayer.side === activeSide
     && selectedPlayer.x === match.ball.x
@@ -1270,9 +1354,21 @@ function App() {
     && match.stealProtectedSide !== opposingCarrier.side;
 
   useEffect(() => {
-    if (!enterEndsTurn || screen !== "match" || !ownTurn) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Enter" || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (capturingEndTurnKey) {
+        event.preventDefault();
+        if (event.code === "Escape") {
+          setCapturingEndTurnKey(false);
+          return;
+        }
+        if (["ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(event.code)) return;
+        setEndTurnKey(event.code);
+        setCapturingEndTurnKey(false);
+        setNotice(`End turn key set to ${displayKey(event.code)}.`);
+        return;
+      }
+      if (!endTurnKey || event.code !== endTurnKey || screen !== "match" || !ownTurn
+        || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
       const target = event.target;
       if (target instanceof HTMLElement
         && (target.isContentEditable || target.closest("button, a, input, textarea, select, [contenteditable='true']"))) return;
@@ -1284,7 +1380,7 @@ function App() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [enterEndsTurn, screen, ownTurn, match, quickplaySide]);
+  }, [capturingEndTurnKey, endTurnKey, screen, ownTurn, match, quickplaySide]);
 
   return (
     <main className={`app-shell ${matchFullscreen && screen === "match" ? "match-fullscreen" : ""}`}>
@@ -1320,7 +1416,7 @@ function App() {
         .token.away{background:#ec695e!important;color:#fff}.token.selected{outline:2px solid white;outline-offset:2px;box-shadow:0 0 14px #fff8}.ball{position:absolute;width:8px;height:8px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px #121712,0 0 7px #fff8;top:-3px;right:-2px}
         .ball-only{font-size:14px;filter:drop-shadow(0 1px 2px #000)}.legend{display:flex;gap:14px;color:#9ca79d;font:9px 'DM Mono',monospace;padding:12px 3px 2px}.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.message{padding:11px 13px;border-radius:9px;background:#ffffff08;color:#c0c9c0;font-size:11px;line-height:1.5;margin-top:12px;min-height:40px}
         .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}
-        .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;font:9px 'DM Mono',monospace;color:#b8f36b}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
+        .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
@@ -1352,8 +1448,8 @@ function App() {
             <div className="panel-heading"><h2>Campaign trail</h2><span>Progression</span></div>
             <button className="campaign-card" style={{ width: "100%", textAlign: "left", cursor: "pointer" }} onClick={() => setScreen("campaign")}><div><strong>Match {Math.min(level, campaignStageCount)} · {fmt(activeFormat).name}</strong><p>See all {campaignStageCount} levels. Beat each match to unlock the next.</p></div><span className="badge">OPEN MAP →</span></button>
             <div className="small-note">BATTLE PASS · LEVEL {battlePassLevel} OF {battlePassFinalLevel}</div><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div>
-            <div className="small-note">{battlePassLevel === battlePassFinalLevel ? "Final level complete" : `${nextLevelWinTarget - xp} more campaign wins to Level ${battlePassLevel + 1}`}</div>
-            <div className="panel-heading" style={{ marginTop: 25 }}><h2>Your starting XI</h2><span>{startingXI.length} on field · {homePlayers.length} available · avg {Math.round(startingXI.reduce((total, player) => total + player.rating, 0) / startingXI.length)} OVR</span></div>
+            <div className="small-note">{battlePassLevel === battlePassFinalLevel ? "Final level complete" : `${nextLevelXpTarget - xp} XP to Level ${battlePassLevel + 1}`}</div>
+            <div className="panel-heading" style={{ marginTop: 25 }}><h2>Your starting XI</h2><span>{startingXI.length} on field · {homePlayers.length} available · avg {startingXI.length ? Math.round(startingXI.reduce((total, player) => total + player.rating, 0) / startingXI.length) : 0} OVR</span></div>
             <div className="player-list">{startingXI.map((player) => <div className="player-chip" key={player.id}><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{player.name}</b><small>{player.club} · {player.position}</small></div><span className="rating">{player.rating}</span></div>)}</div>
           </section>
           <section className="panel">
@@ -1361,13 +1457,13 @@ function App() {
             <div className="pass-track">{[battlePassLevel, battlePassLevel + 1, battlePassLevel + 2]
               .filter((rewardLevel) => rewardLevel <= battlePassFinalLevel)
               .map((rewardLevel) => {
-                const playerReward = passPlayerRewards[rewardLevel - 2];
+                const playerReward = playerRewardsByLevel[rewardLevel];
                 const formatReward = formats.find((format) => format.unlock === rewardLevel);
                 const coinReward = rewardLevel === coins250Level ? "250 coins" : rewardLevel === coins500Level ? "500 coins" : undefined;
                 const label = rewardLevel === 1 ? "Starting XI" : playerReward?.name ?? formatReward?.name ?? coinReward ?? "Reward";
                 return <div key={rewardLevel} className={`reward ${rewardLevel <= battlePassLevel ? "unlocked" : "locked"}`}>
                   <div className="reward-icon">{rewardLevel === 1 ? "⚽" : formatReward ? "🏟" : coinReward ? "◈" : "🏅"}</div><b>LEVEL {rewardLevel}</b><small>{label}</small>
-                  <small>{winsRequiredForPassLevel(rewardLevel)} wins total</small>
+                  <small>{xpRequiredForPassLevel(rewardLevel).toLocaleString()} XP total</small>
                 </div>;
               })}</div>
             <div className="panel-heading" style={{ marginTop: 29 }}><h2>Choose your format</h2><span>Unlocked formats</span></div>
@@ -1381,7 +1477,7 @@ function App() {
         <div className="eyebrow" style={{ marginTop: 25 }}>Your road to the final</div>
         <h1>Campaign</h1>
         <p className="subtitle">All {campaignStageCount} levels are shown. Win the current match to unlock the next; locked matches cannot be started early.</p>
-        <div className="pass-banner"><h2>{level > campaignStageCount ? "Campaign complete" : `Next up: Level ${level}`}</h2><p>{level > campaignStageCount ? "You have beaten every campaign level. Replay any level whenever you like." : `${Math.max(0, Math.min(level - 1, campaignStageCount))} of ${campaignStageCount} levels complete · the opposition grows stronger each match.`}</p></div>
+        <div className="pass-banner"><h2>{level > campaignStageCount ? "Campaign complete" : `Next up: Level ${level}`}</h2><p>{level > campaignStageCount ? "You have beaten every campaign level. Replay any level whenever you like." : `${Math.max(0, Math.min(level - 1, campaignStageCount))} of ${campaignStageCount} levels complete · earn ${100 * level} XP for a win at this stage, with larger rewards as the campaign advances.`}</p></div>
         <div className="campaign-levels">{campaignStageNames.map((name, index) => {
           const stage = index + 1;
           const unlocked = stage <= level;
@@ -1389,7 +1485,7 @@ function App() {
           return <button key={stage} className={`campaign-level ${unlocked ? "available" : "locked"}`} disabled={!unlocked} onClick={() => startMatch(stage)}>
             <h3>LEVEL {String(stage).padStart(2, "0")} {completed ? "· COMPLETE" : ""}</h3>
             <strong>{name}</strong>
-            <p>{stage === level ? `AI level ${Math.ceil(stage / 2)} · next match` : `AI level ${Math.ceil(stage / 2)} · first to ${activeFormat === "golden-goal" ? 1 : activeFormat === "small-sided" ? 2 : 3} goals`}</p>
+            <p>{stage === level ? `AI level ${Math.ceil(stage / 2)} · ${100 * stage} XP for a win` : `AI level ${Math.ceil(stage / 2)} · ${100 * stage} XP · first to ${activeFormat === "golden-goal" ? 1 : activeFormat === "small-sided" ? 2 : 3} goals`}</p>
             <span className="badge">{completed ? "REPLAY" : unlocked ? "PLAY LEVEL →" : "🔒 BEAT LEVEL " + (stage - 1)}</span>
           </button>;
         })}</div>
@@ -1412,21 +1508,42 @@ function App() {
             )}</div>
           </div>
           <div className="setting-row">
-            <div className="setting-copy"><strong>Enter ends your turn</strong><small>Press Enter during a match to pass your turn. You can also use the End Turn button.</small></div>
-            <div className="setting-options"><button className={`switch-btn ${enterEndsTurn ? "active" : ""}`} onClick={() => setEnterEndsTurn((enabled) => !enabled)} aria-pressed={enterEndsTurn}>{enterEndsTurn ? "ON" : "OFF"}</button></div>
+            <div className="setting-copy"><strong>End turn key</strong><small>Click bind, then press the key you want, like Minecraft controls. Escape cancels. Unbind to disable the shortcut.</small></div>
+            <div className="setting-options">
+              <button className={capturingEndTurnKey ? "active" : ""} onClick={() => setCapturingEndTurnKey(true)}>
+                {capturingEndTurnKey ? "PRESS A KEY…" : displayKey(endTurnKey)}
+              </button>
+              <button className="switch-btn" onClick={() => { setEndTurnKey(null); setCapturingEndTurnKey(false); }}>UNBIND</button>
+            </div>
           </div>
         </section>
       </div>}
 
       {screen === "locker" && <div className="content" style={{ paddingTop: 40 }}>
-        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Review each player’s signature ability and choose a match format. Earn wins to unlock new squad members.</p>
+        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Players are selected for the first 11 in their listed position. Change a player’s position here to customize your lineup. Ratings and ability stats are game estimates, not official MLS ratings.</p>
         <div className="panel-heading" style={{ marginTop: 28 }}><h2>Player roster</h2><span>{homePlayers.length} unlocked · {coins} coins</span></div>
         <div className="locker-grid">{roster.map((player) => {
           const unlocked = unlockedPlayers.includes(player.id);
           const unlockAt = playerUnlocks[player.id];
-          return <article key={player.id} className="roster-card"><div className="roster-top"><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><h3>{player.name}</h3><small style={{ color: "#89948b", fontSize: 9 }}>{player.club}</small></div><span className="rating">{player.rating}</span></div><p>{player.ability}</p><div className="roster-meta"><span>{player.position}</span><span>{unlocked ? "IN SQUAD" : `PASS LV ${unlockAt}`}</span></div>{!unlocked && <button className="secondary" style={{ width: "100%", marginTop: 10, padding: 9 }} disabled>UNLOCK IN SEASON PASS</button>}</article>;
+          const currentPosition = customPositions[player.id] ?? player.position;
+          const isStarter = startingXI.some((starter) => starter.id === player.id);
+          return <article key={player.id} className="roster-card">
+            <div className="roster-top"><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><h3>{player.name}</h3><small style={{ color: "#89948b", fontSize: 9 }}>{player.club}</small></div><span className="rating">{player.rating}</span></div>
+            <p>{player.ability} · Ability {player.abilityStat}/100</p>
+            <div className="roster-meta"><span>{unlocked ? (isStarter ? "STARTING XI" : "SQUAD") : `PASS LV ${unlockAt}`}</span>
+              <select aria-label={`${player.name} position`} value={currentPosition} disabled={!unlocked}
+                onChange={(event) => {
+                  const position = event.target.value as Position;
+                  setCustomPositions((current) => ({ ...current, [player.id]: position === player.position ? undefined : position }));
+                  setNotice(`${player.name} position set to ${position}. Your starting XI updates automatically.`);
+                }}>
+                {(["GK", "DEF", "MID", "FWD"] as Position[]).map((position) => <option key={position} value={position}>{position}</option>)}
+              </select>
+            </div>
+            {!unlocked && <button className="secondary" style={{ width: "100%", marginTop: 10, padding: 9 }} disabled>UNLOCK IN SEASON PASS</button>}
+          </article>;
         })}</div>
-        <div className="panel-heading" style={{ marginTop: 33 }}><h2>Match formats</h2><span>Earn campaign wins to unlock levels</span></div>
+        <div className="panel-heading" style={{ marginTop: 33 }}><h2>Match formats</h2><span>Unlock at Season Pass Levels 10 and 20</span></div>
         <div className="format-grid">{formats.map((f) => <article className="format-card" key={f.id}><h3>{f.name}</h3><p>{f.detail}</p>{battlePassLevel >= f.unlock ? <button className={activeFormat === f.id ? "primary" : "secondary"} onClick={() => { setActiveFormat(f.id); setNotice(`${f.name} selected.`); }}>{activeFormat === f.id ? "SELECTED" : "SELECT FORMAT"}</button> : <button className="secondary" disabled>UNLOCK AT LEVEL {f.unlock}</button>}</article>)}</div>
       </div>}
 
@@ -1465,7 +1582,7 @@ function App() {
         <p>{quickplayMode === "local"
           ? match.score[0] === match.score[1] ? "The match ends level." : `${match.score[0] > match.score[1] ? "Home" : "Away"} wins the local match!`
           : match.score[0] === match.score[1] ? "The match ends level." : match.score[0] > match.score[1] ? "Your squad takes the win." : "The opposition takes the win."}</p>
-        {quickplayMode === null && match.score[0] > match.score[1] && <div className="victory-reward">CAMPAIGN REWARD · +{30 + match.campaignStage * 5} COINS · +1 BATTLE PASS WIN</div>}
+        {match.score[0] > match.score[1] && <div className="victory-reward">{quickplayMode === null ? `CAMPAIGN REWARD · +${100 * match.campaignStage} XP · +${30 + match.campaignStage * 5} COINS` : "MATCH REWARD · +100 XP"}</div>}
         <div className="victory-actions">
           <button className="primary" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("campaign"); }}>CAMPAIGN MAP</button>
           <button className="secondary" onClick={() => setScreen("pass")}>BATTLE PASS</button>
@@ -1474,13 +1591,13 @@ function App() {
       </section>}
 
       {screen === "pass" && <div className="content pass-page">
-        <div className="eyebrow">Earn rewards as you play</div><h1>Season pass</h1><p className="subtitle">Every campaign win advances your total. Each new level takes more wins than the last and unlocks one MLS player, a match format, or a coin reward.</p>
-        <div className="pass-banner"><h2>Level {battlePassLevel} of {battlePassFinalLevel} <span style={{ color: "#b8f36b" }}>·</span> {xp} campaign wins</h2><p>{battlePassLevel === battlePassFinalLevel ? "You reached the final level. Your progress is saved on this device." : `${nextLevelWinTarget - xp} more ${nextLevelWinTarget - xp === 1 ? "win" : "wins"} to reach Level ${battlePassLevel + 1}. Each later level requires more wins.`}</p><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div><div className="small-note">{battlePassLevel === battlePassFinalLevel ? "FINAL LEVEL COMPLETE" : `${winsTowardNextLevel} / ${winsForNextLevel} wins toward Level ${battlePassLevel + 1}`}</div></div>
+        <div className="eyebrow">Earn rewards as you play</div><h1>Season pass</h1><p className="subtitle">Each level takes 1,000 XP. Wins earn 100 XP in regular matches, while campaign wins scale with the stage. Unlock Street 3v3 at Level 10 and Golden Goal at Level 20.</p>
+        <div className="pass-banner"><h2>Level {battlePassLevel} of {battlePassFinalLevel} <span style={{ color: "#b8f36b" }}>·</span> {xp.toLocaleString()} XP</h2><p>{battlePassLevel === battlePassFinalLevel ? "You reached the final level. Your progress is saved on this device." : `${nextLevelXpTarget - xp} XP to reach Level ${battlePassLevel + 1}. Each level requires 1,000 XP.`}</p><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div><div className="small-note">{battlePassLevel === battlePassFinalLevel ? "FINAL LEVEL COMPLETE" : `${xpTowardNextLevel} / ${xpForNextLevel} XP toward Level ${battlePassLevel + 1}`}</div></div>
         <div className="panel-heading"><h2>Level rewards</h2><span>{passPlayerRewards.length} MLS players · {battlePassFinalLevel} total levels · one reward per level</span></div>
         <div className="pass-levels">{Array.from({ length: battlePassFinalLevel }, (_, index) => index + 1).map((rewardLevel) => {
-          const playerReward = passPlayerRewards[rewardLevel - 2];
+          const playerReward = playerRewardsByLevel[rewardLevel];
           const unlocked = battlePassLevel >= rewardLevel;
-          const requiredWins = winsRequiredForPassLevel(rewardLevel);
+          const requiredXp = xpRequiredForPassLevel(rewardLevel);
           const formatReward = formats.find((format) => format.unlock === rewardLevel);
           const coinReward = rewardLevel === coins250Level ? 250 : rewardLevel === coins500Level ? 500 : 0;
           const rewardName = rewardLevel === 1
@@ -1495,8 +1612,8 @@ function App() {
               : playerReward
                 ? `${playerReward.club} · ${playerReward.position} · ${playerReward.rating} OVR`
                 : formatReward?.detail ?? "Campaign coin bonus"}</p>
-            <span className="small-note">{requiredWins} campaign {requiredWins === 1 ? "win" : "wins"} required</span>
-            {unlocked ? <span className="badge">LEVEL COMPLETE</span> : <span className="small-note">{requiredWins - xp} {requiredWins - xp === 1 ? "WIN" : "WINS"} TO GO</span>}
+            <span className="small-note">{requiredXp.toLocaleString()} XP required</span>
+            {unlocked ? <span className="badge">LEVEL COMPLETE</span> : <span className="small-note">{(requiredXp - xp).toLocaleString()} XP TO GO</span>}
           </article>;
         })}</div>
       </div>}
@@ -1525,11 +1642,11 @@ function App() {
           <div className="message">{match.message}</div>
         </section>
         <aside className="sidebar">
-          <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{selectedPlayer.player.ability}</div></> : <small style={{ color: "#8e998f" }}>Select a player on the pitch</small>}</section>
+          <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#8e998f" }}>Select a player on the pitch</small>}</section>
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
-            <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${7 + (selectedPlayer.player.shotBonus ?? 0)}` : "get in range"}</span></button>
+            <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
             <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passingRange} tiles`}</span></button>
-            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${cap(50 + (selectedPlayer.player.nutmegBonus ?? 0), 20, 80)}% · fail: ${quickplayMode === "local" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
+            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
             <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>

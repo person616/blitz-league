@@ -914,7 +914,17 @@ function App() {
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
   const [quickplaySide, setQuickplaySide] = useState<"home" | "away" | null>(null);
-  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | null>(null);
+  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | null>(null);
+  const [serverAddress, setServerAddress] = useState(() => {
+    try { return window.localStorage.getItem("blitz-league-server-address") ?? ""; }
+    catch { return ""; }
+  });
+  const [joinRoomCode, setJoinRoomCode] = useState("");
+  const [onlineRoomCode, setOnlineRoomCode] = useState("");
+  const [onlineStatus, setOnlineStatus] = useState("");
+  const [onlineSide, setOnlineSide] = useState<"home" | "away" | null>(null);
+  const [onlineReady, setOnlineReady] = useState(false);
+  const [showOnlineSetup, setShowOnlineSetup] = useState(false);
   const [passMode, setPassMode] = useState(false);
   const [matchFullscreen, setMatchFullscreen] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
@@ -923,6 +933,9 @@ function App() {
   const [endTurnKey, setEndTurnKey] = useState<string | null>("Enter");
   const [capturingEndTurnKey, setCapturingEndTurnKey] = useState(false);
   const latestMatch = useRef(match);
+  const onlineSocket = useRef<WebSocket | null>(null);
+  const remoteMatchUpdate = useRef(false);
+  const lastOnlineMatch = useRef<Match | null>(null);
   const lastCaptionMessage = useRef(match.message);
   const captionTimer = useRef<number | undefined>(undefined);
   const battlePassLevel = devToolsEnabled ? battlePassFinalLevel : passLevelForXp(xp);
@@ -1004,6 +1017,7 @@ function App() {
   const matchIsSmallSided = match.format === "small-sided";
   const scoreLabel = `${match.score[0]} — ${match.score[1]}`;
   const clockLabel = match.halftime ? "45' · HT" : `${match.minute}'`;
+  const activeSideForClient = () => onlineSide ?? (quickplaySide !== null ? match.turn : "home");
 
   const setFormationSlotPlayer = (slotId: string, playerId: string) => {
     setFormationAssignments((current) => {
@@ -1228,6 +1242,22 @@ function App() {
   }, [match]);
 
   useEffect(() => {
+    if (remoteMatchUpdate.current) {
+      remoteMatchUpdate.current = false;
+      lastOnlineMatch.current = match;
+      return;
+    }
+    const socket = onlineSocket.current;
+    const previous = lastOnlineMatch.current;
+    lastOnlineMatch.current = match;
+    if (!onlineReady || !onlineSide || !socket || socket.readyState !== WebSocket.OPEN
+      || (match.turn !== onlineSide && previous?.turn !== onlineSide)) return;
+    socket.send(JSON.stringify({ type: "match-state", match }));
+  }, [match, onlineSide, onlineReady]);
+
+  useEffect(() => () => onlineSocket.current?.close(), []);
+
+  useEffect(() => {
     if (screen !== "match" || match.finished || match.halftime) return;
     const timer = window.setInterval(() => {
       setMatch((current) => {
@@ -1275,8 +1305,117 @@ function App() {
   }, [captionsEnabled]);
 
   function stopQuickplay() {
+    onlineSocket.current?.close();
+    onlineSocket.current = null;
+    setOnlineSide(null);
+    setOnlineReady(false);
+    setOnlineRoomCode("");
+    setOnlineStatus("");
+    lastOnlineMatch.current = null;
     setQuickplaySide(null);
     setQuickplayMode(null);
+  }
+
+  function connectOnline(action: "create-room" | "join-room") {
+    let address: URL;
+    try {
+      address = new URL(serverAddress.trim());
+    } catch {
+      setOnlineStatus("Enter the secure server address from the host.");
+      return;
+    }
+    if (address.protocol !== "wss:" || (window.location.protocol === "https:" && address.protocol !== "wss:")) {
+      setOnlineStatus("Use a secure wss:// address. For hosting help, see the instructions below.");
+      return;
+    }
+    if (onlineSocket.current) onlineSocket.current.close();
+    const socket = new WebSocket(address.toString().replace(/\/$/, ""));
+    onlineSocket.current = socket;
+    setOnlineStatus("Connecting to the host...");
+    setOnlineRoomCode("");
+    setOnlineReady(false);
+    socket.onopen = () => {
+      try { window.localStorage.setItem("blitz-league-server-address", address.toString().replace(/\/$/, "")); }
+      catch { /* The address remains available for this session. */ }
+      if (action === "create-room") {
+        const initial = makeMatch(awayPlayers, level, activeFormat, homePlayers, activeFormation,
+          formationAssignments[activeFormationId] ?? {});
+        lastOnlineMatch.current = initial;
+        socket.send(JSON.stringify({ type: action, match: initial }));
+      } else {
+        socket.send(JSON.stringify({ type: action, code: joinRoomCode.trim().toUpperCase() }));
+      }
+    };
+    socket.onmessage = (event) => {
+      let packet: { type?: string; code?: string; side?: "home" | "away"; match?: Match; message?: string };
+      try {
+        packet = JSON.parse(String(event.data));
+      } catch {
+        setOnlineStatus("Received an invalid message from the host.");
+        return;
+      }
+      if (packet.type === "error") {
+        setOnlineStatus(packet.message ?? "The host rejected the connection.");
+        return;
+      }
+      if (packet.type === "room-created" && packet.match) {
+        setOnlineRoomCode(packet.code ?? "");
+        setOnlineSide("home");
+        setQuickplaySide("home");
+        setQuickplayMode("online");
+        setMatch(packet.match);
+        lastOnlineMatch.current = packet.match;
+        setOnlineStatus("Room ready. Waiting for the other player to join.");
+        return;
+      }
+      if (packet.type === "room-joined" && packet.match) {
+        setOnlineRoomCode(packet.code ?? "");
+        setOnlineSide("away");
+        setQuickplaySide("away");
+        setQuickplayMode("online");
+        remoteMatchUpdate.current = true;
+        lastOnlineMatch.current = packet.match;
+        setMatch(packet.match);
+        setOnlineReady(true);
+        setOnlineStatus("Connected. Your turn will appear when it is your side's turn.");
+        setScreen("match");
+        return;
+      }
+      if (packet.type === "player-joined") {
+        setOnlineReady(true);
+        setOnlineStatus("Opponent connected. Match started.");
+        setScreen("match");
+        return;
+      }
+      if (packet.type === "player-left") {
+        setOnlineReady(false);
+        setOnlineStatus("Opponent disconnected. Share the room code to let them rejoin.");
+        return;
+      }
+      if (packet.type === "room-closed") {
+        setOnlineReady(false);
+        setOnlineStatus(packet.message ?? "The host closed the room.");
+        setOnlineSide(null);
+        setQuickplaySide(null);
+        setQuickplayMode(null);
+        setOnlineRoomCode("");
+        return;
+      }
+      if (packet.type === "match-state" && packet.match) {
+        remoteMatchUpdate.current = true;
+        lastOnlineMatch.current = packet.match;
+        setMatch(packet.match);
+        if (packet.match.finished) setScreen("victory");
+      }
+    };
+    socket.onerror = () => setOnlineStatus("Could not reach the server. Check the address and make sure the host is online.");
+    socket.onclose = () => {
+      if (onlineSocket.current === socket) {
+        onlineSocket.current = null;
+        setOnlineReady(false);
+        setOnlineStatus((current) => current || "Disconnected from the match server.");
+      }
+    };
   }
 
   function showQuickplayOptions() {
@@ -1688,7 +1827,7 @@ function App() {
   }
 
   function moveTo(x: number, y: number) {
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     if (match.turn !== activeSide || match.finished || match.halftime) return;
     const player = match.tokens.find((t) => t.player.id === match.selected && t.side === activeSide);
     if (!player) return;
@@ -1737,7 +1876,7 @@ function App() {
   }
 
   function shoot() {
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     const player = match.tokens.find((t) => t.player.id === match.selected && t.side === activeSide);
     if (!player || match.turn !== activeSide || match.ball.x !== player.x || match.ball.y !== player.y || match.finished) {
       setMatch({ ...match, message: "Select the player with the ball to shoot." });
@@ -1834,7 +1973,7 @@ function App() {
       setMatch({ ...match, message: "Pass selection canceled." });
       return;
     }
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     const player = match.tokens.find((t) => t.player.id === match.selected && t.side === activeSide);
     if (!player || match.turn !== activeSide || match.ball.x !== player.x || match.ball.y !== player.y || match.finished) {
       setMatch({ ...match, message: "Select the player with the ball to pass." });
@@ -1859,7 +1998,7 @@ function App() {
   }
 
   function passTo(receiverId: string) {
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     const player = match.tokens.find((token) => token.player.id === match.selected && token.side === activeSide);
     const receiver = match.tokens.find((token) => token.player.id === receiverId);
     if (!player || !receiver || receiver.side !== player.side || receiver.player.id === player.player.id
@@ -1902,7 +2041,7 @@ function App() {
   }
 
   function steal() {
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     const defender = match.tokens.find((token) => token.player.id === match.selected && token.side === activeSide);
     const carrier = match.tokens.find((token) => token.x === match.ball.x && token.y === match.ball.y && token.side !== activeSide);
     if (!defender || !carrier || !ownTurn || !adjacent(defender, carrier) || match.finished) {
@@ -1944,7 +2083,7 @@ function App() {
   }
 
   function nutmeg() {
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     const player = match.tokens.find((t) => t.player.id === match.selected && t.side === activeSide);
     if (!player || match.turn !== activeSide || match.ball.x !== player.x || match.ball.y !== player.y || match.finished) {
       setMatch({ ...match, message: "Select the player with the ball to try a nutmeg." });
@@ -2011,7 +2150,7 @@ function App() {
 
   function onCellClick(x: number, y: number) {
     const token = match.tokens.find((t) => t.x === x && t.y === y);
-    const activeSide = quickplaySide !== null ? match.turn : "home";
+    const activeSide = activeSideForClient();
     if (passMode) {
       if (token && eligiblePassIds.has(token.player.id)) {
         passTo(token.player.id);
@@ -2038,8 +2177,9 @@ function App() {
   }
 
   const selectedPlayer = match.tokens.find((t) => t.player.id === match.selected);
-  const activeSide = quickplaySide !== null ? match.turn : "home";
-  const ownTurn = match.turn === activeSide && !match.finished && !match.halftime;
+  const activeSide = activeSideForClient();
+  const ownTurn = match.turn === activeSide && !match.finished && !match.halftime
+    && (quickplayMode !== "online" || onlineReady);
   const movementRange = selectedPlayer ? 2 + movementBonus(selectedPlayer.player) : 0;
   const passingRange = movementRange + 2 + (selectedPlayer ? passingBonus(selectedPlayer.player) : 0);
   const eligiblePassIds = new Set(
@@ -2154,12 +2294,13 @@ function App() {
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
         .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}
+        .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-host-help{display:grid;gap:8px;margin-top:18px;color:#929d93;font-size:10px;line-height:1.7}.online-host-help strong{color:#dce7dc;font-size:11px}.online-host-help code{background:#ffffff0b;border:1px solid #ffffff12;border-radius:4px;padding:2px 5px;color:#d7f583;font-family:'DM Mono',monospace}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
         .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#929d93;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#b8f36b18;border-color:#b8f36b75;color:#b8f36b}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0d1110}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}
         .toast{position:fixed;right:24px;bottom:23px;background:#d5f5b3;color:#17200e;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:700;box-shadow:0 10px 40px #0008;z-index:9}
         @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
-        @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
+        @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.online-room-actions{grid-template-columns:1fr}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
       `}</style>
       <style>{`
         .store-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:13px;margin:18px 0 30px}
@@ -2504,13 +2645,33 @@ function App() {
             <p>Two players, one device. Take turns and hand the screen to the other player. Both teams use the same squad.</p>
             <span className="badge">PASS &amp; PLAY</span>
           </button>
-          <button className="quickplay-option disabled" disabled title="Online matchmaking requires a hosted game server.">
+          <button className={`quickplay-option ${showOnlineSetup ? "selected" : ""}`} onClick={() => setShowOnlineSetup((shown) => !shown)}>
             <span className="quickplay-icon">🌐</span>
             <strong>Online · 11v11</strong>
-            <p>Play against someone on another device. Online matchmaking is not connected because this game has no hosted game server.</p>
-            <span className="badge">SERVER REQUIRED</span>
+            <p>Host a room from your computer or join another player's room using a six-character code.</p>
+            <span className="badge">CREATE OR JOIN ROOM</span>
           </button>
         </div>
+        {showOnlineSetup && <section className="settings-card online-setup">
+          <div className="panel-heading"><h2>Computer-hosted 1v1</h2><span>Your server · your room</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7 }}>Enter the host's secure WebSocket address. The host starts the game server on their computer and keeps it running for the whole match. Both players need internet access.</p>
+          <label className="small-note" htmlFor="online-server-address">SECURE SERVER ADDRESS (WSS)</label>
+          <input className="role-player-select" id="online-server-address" type="url" placeholder="wss://your-tunnel.trycloudflare.com"
+            value={serverAddress} onChange={(event) => setServerAddress(event.target.value)} />
+          <div className="online-room-actions">
+            <button className="primary" onClick={() => connectOnline("create-room")}>HOST A ROOM</button>
+            <input className="role-player-select" aria-label="Room code" placeholder="ROOM CODE"
+              maxLength={6} value={joinRoomCode} onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} />
+            <button className="secondary" disabled={joinRoomCode.trim().length !== 6} onClick={() => connectOnline("join-room")}>JOIN ROOM</button>
+          </div>
+          {onlineStatus && <div className="store-notice" role="status">{onlineStatus}{onlineRoomCode && <> · ROOM <strong style={{ color: "#b8f36b", letterSpacing: ".12em" }}>{onlineRoomCode}</strong></>}</div>}
+          <div className="online-host-help">
+            <strong>Start your computer's server</strong>
+            <span>In the game project folder, run <code>npm.cmd run server</code> in PowerShell, then in another terminal run <code>cloudflared tunnel --url http://localhost:8787</code>.</span>
+            <span>Install Cloudflare Tunnel (cloudflared) first. Copy its HTTPS trycloudflare.com address, change <code>https://</code> to <code>wss://</code>, paste it above, and host a room. Keep both terminals open.</span>
+            <span>Share the WSS address and six-character room code with your opponent. Quick tunnels use a temporary address; create a new room if it changes.</span>
+          </div>
+        </section>}
       </div>}
 
       {screen === "victory" && <section className="victory-page">
@@ -2518,7 +2679,9 @@ function App() {
         <div className="eyebrow">{match.minute >= 90 ? "FULL TIME" : "MATCH COMPLETE"}</div>
         <h1>{match.score[0] === match.score[1] ? "A hard-fought draw" : match.score[0] > match.score[1] ? "Victory!" : "Final whistle"}</h1>
         <div className="victory-score">{match.score[0]} — {match.score[1]}</div>
-        <p>{quickplayMode === "local"
+        <p>{quickplayMode === "online"
+          ? match.score[0] === match.score[1] ? "The online match ends level." : `${match.score[0] > match.score[1] ? "Home" : "Away"} wins the online match!`
+          : quickplayMode === "local"
           ? match.score[0] === match.score[1] ? "The match ends level." : `${match.score[0] > match.score[1] ? "Home" : "Away"} wins the local match!`
           : match.score[0] === match.score[1] ? "The match ends level." : match.score[0] > match.score[1] ? "Your squad takes the win." : "The opposition takes the win."}</p>
         {match.score[0] > match.score[1] && <div className="victory-reward">{quickplayMode === null ? `CAMPAIGN REWARD · +${100 * match.campaignStage} XP · +${30 + match.campaignStage * 5} COINS` : "MATCH REWARD · +100 XP"}</div>}
@@ -2559,7 +2722,9 @@ function App() {
 
       {screen === "match" && <div className="content match-layout">
         <section>
-          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {match.formationId}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "online" ? `${onlineSide === "home" ? "HOME" : "AWAY"} · ONLINE 1V1${ownTurn ? " · YOUR TURN" : " · OPPONENT'S TURN"}` : quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {match.formationId}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          {quickplayMode === "online" && !onlineReady && <div className="store-notice" role="status">{onlineStatus || "Waiting for the other player to join."} {onlineRoomCode && <>Room code: <strong>{onlineRoomCode}</strong></>}</div>}
+          {quickplayMode === "online" && onlineStatus && onlineReady && onlineStatus.includes("disconnected") && <div className="kit-warning" role="alert">{onlineStatus}</div>}
           {match.halftime && <div className="halftime-panel"><div><strong>Halftime · {scoreLabel}</strong><small>Teams have switched ends. Each in-game minute lasts 3.5 seconds.</small></div><button className="primary" onClick={resumeSecondHalf}>START SECOND HALF</button></div>}
           {teamColorsSimilar && <div className="kit-warning" role="alert">⚠ Your team and opposition colors are too similar. Change one in Locker Room to make the sides easier to distinguish.</div>}
           <div className="pitch-wrap"><div className="pitch-viewport"><div className="pitch" aria-label="22 by 11 football pitch" style={{ transform: `translate(-${pitchCameraX}%, -${pitchCameraY}%)` }}>
@@ -2586,9 +2751,9 @@ function App() {
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
             <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
             <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passingRange} tiles`}</span></button>
-            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
+            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
             <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>
-            <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
+            <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplayMode === "online" ? "Turn passed to your online opponent." : quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplayMode === "online" ? "send turn online" : quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>
           {devToolsEnabled && <section className="side-panel"><h3>Developer controls</h3>
             <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>

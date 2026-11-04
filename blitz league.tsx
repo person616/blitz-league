@@ -363,6 +363,70 @@ const selectSmallSidedXI = (players: Player[]) => {
     .sort((a, b) => overallRating(b) - overallRating(a))]
     .slice(0, 3);
 };
+const maxPlayerUnlockLevel = Math.max(...Object.values(playerUnlocks));
+const aiOpponentRoster = (difficulty: number) => {
+  const unlockLimit = Math.ceil(maxPlayerUnlockLevel * cap(difficulty, 1, 100) / 100);
+  return selectXI(roster.filter((player) =>
+    startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= unlockLimit,
+  ));
+};
+const chooseAiFormation = (
+  players: Player[],
+  strategy: AiStrategy,
+  playStyle: HumanPlayStyle,
+) => {
+  const styleTotal = Math.max(1, playStyle.shots + playStyle.passes + playStyle.carries + playStyle.nutmegs);
+  const shotRate = playStyle.shots / styleTotal;
+  const passRate = playStyle.passes / styleTotal;
+  const carryRate = (playStyle.carries + playStyle.nutmegs) / styleTotal;
+  return [...formations].map((formation) => {
+    const assignments: Record<string, string> = {};
+    const used = new Set<string>();
+    formation.slots.forEach((slot) => {
+      const candidates = players.filter((player) => player.position === slot.position && !used.has(player.id));
+      const abilityScore = (player: Player) => {
+        if (player.position === "FWD") {
+          return Math.max(abilityEffect(player, "finishing") * strategy.finishing,
+            abilityEffect(player, "pace") * strategy.progression,
+            abilityEffect(player, "dribbling") * strategy.progression);
+        }
+        if (player.position === "MID") {
+          return Math.max(abilityEffect(player, "playmaking") * strategy.passing,
+            abilityEffect(player, "pace") * strategy.progression,
+            abilityEffect(player, "dribbling") * strategy.progression);
+        }
+        if (player.position === "DEF") return abilityEffect(player, "defending") * strategy.marking;
+        return abilityEffect(player, "goalkeeping") * strategy.marking;
+      };
+      const player = candidates.sort((a, b) =>
+        (overallRating(b) + abilityScore(b) * 0.25) - (overallRating(a) + abilityScore(a) * 0.25),
+      )[0];
+      if (player) {
+        assignments[slot.id] = player.id;
+        used.add(player.id);
+      }
+    });
+    const lineup = assignFormationPlayers(players, formation, assignments);
+    const playerValue = lineup.reduce((total, player) => {
+      const positionBonus = player.position === "FWD"
+        ? Math.max(abilityEffect(player, "finishing"), abilityEffect(player, "pace"), abilityEffect(player, "dribbling")) * strategy.finishing
+        : player.position === "MID"
+          ? Math.max(abilityEffect(player, "playmaking"), abilityEffect(player, "pace")) * strategy.passing
+          : player.position === "DEF"
+            ? abilityEffect(player, "defending") * strategy.marking
+            : abilityEffect(player, "goalkeeping") * strategy.marking;
+      return total + overallRating(player) + positionBonus * 0.18;
+    }, 0);
+    const formationStyle = formation.id === "4-2-3-1"
+      ? passRate * strategy.passing
+      : formation.id === "4-3-3"
+        ? carryRate * strategy.progression
+        : formation.id === "3-5-2"
+          ? shotRate * strategy.finishing
+          : strategy.countering * 0.35;
+    return { formation, assignments, score: playerValue + formationStyle * 8 };
+  }).sort((a, b) => b.score - a.score)[0] ?? { formation: defaultFormation, assignments: {} };
+};
 const playersAvailableAt = (passLevel: number) =>
   [...startingPlayers, ...Object.entries(playerUnlocks).filter(([, requiredLevel]) => passLevel >= requiredLevel).map(([id]) => id)];
 
@@ -599,7 +663,7 @@ const ownGoalDistance = (player: Token, half: 1 | 2 = 1) => {
   const goalX = player.side === "home" ? (half === 1 ? 21 : 0) : (half === 1 ? 0 : 21);
   return Math.abs(goalX - player.x);
 };
-const campaignStageCount = 55;
+const campaignStageCount = 105;
 const campaignStageNames = [
   "Season Opener", "Rivalry Match", "Road Test", "Cup Qualifier", "Playoff Push",
   "Tactical Trial", "Derby Day", "Quarterfinal", "Semifinal", "Conference Final",
@@ -614,6 +678,59 @@ const campaignStageNames = [
   "Golden Goal Challenge", "Rivalry Decider", "Promotion Push", "Top-Four Showdown",
   "Final Four", "National Cup Final", "Champions' Night", "Blitz League Final",
 ];
+campaignStageNames.push(...Array.from({ length: 50 }, (_, index) =>
+  `${["Continental", "Rivalry", "Championship", "Road to Glory", "Tactical"][index % 5]} ${["Cup", "Showdown", "Final", "Challenge", "Decider"][Math.floor(index / 5) % 5]} · Stage ${index + 56}`,
+));
+type AiStrategy = { finishing: number; progression: number; passing: number; pressing: number; marking: number; countering: number; fitness: number };
+type HumanPlayStyle = { shots: number; passes: number; carries: number; nutmegs: number };
+const AI_POLICY_SEARCH_SIZE = 200_000;
+const aiStrategyBenchmarks = [
+  { shot: 0.9, progress: 0.3, pass: 0.4, press: 0.7, mark: 0.6, counter: 0.7 },
+  { shot: 0.6, progress: 0.8, pass: 0.8, press: 0.6, mark: 0.8, counter: 0.5 },
+  { shot: 0.4, progress: 0.9, pass: 0.5, press: 0.9, mark: 0.6, counter: 0.9 },
+  { shot: 0.7, progress: 0.5, pass: 0.9, press: 0.5, mark: 0.9, counter: 0.6 },
+  { shot: 0.5, progress: 0.7, pass: 0.6, press: 0.8, mark: 0.9, counter: 0.8 },
+  { shot: 0.8, progress: 0.6, pass: 0.7, press: 0.7, mark: 0.7, counter: 0.7 },
+  { shot: 0.3, progress: 0.9, pass: 0.8, press: 0.8, mark: 0.8, counter: 0.8 },
+  { shot: 0.9, progress: 0.7, pass: 0.4, press: 0.6, mark: 0.7, counter: 0.8 },
+];
+const searchAiStrategies = (): AiStrategy[] => {
+  let seed = 0x6d2b79f5;
+  const random = () => {
+    seed = Math.imul(seed ^ (seed >>> 15), seed | 1);
+    seed ^= seed + Math.imul(seed ^ (seed >>> 7), seed | 61);
+    return ((seed ^ (seed >>> 14)) >>> 0) / 4294967296;
+  };
+  const strategies: AiStrategy[] = [];
+  for (let candidate = 0; candidate < AI_POLICY_SEARCH_SIZE; candidate += 1) {
+    const policy = {
+      finishing: random(),
+      progression: random(),
+      passing: random(),
+      pressing: random(),
+      marking: random(),
+      countering: random(),
+      fitness: 0,
+    };
+    policy.fitness = aiStrategyBenchmarks.reduce((total, scenario) => {
+      const attack = policy.finishing * scenario.shot
+        + policy.progression * scenario.progress
+        + policy.passing * scenario.pass;
+      const defense = policy.pressing * scenario.press
+        + policy.marking * scenario.mark
+        + policy.countering * scenario.counter;
+      const overcommitment = Math.max(0, policy.pressing + policy.finishing - 1.55)
+        * Math.max(scenario.counter, scenario.pass) * 0.16;
+      const imbalance = Math.abs(attack - defense) * 0.06;
+      return total + attack * 0.54 + defense * 0.46 - overcommitment - imbalance;
+    }, 0) / aiStrategyBenchmarks.length;
+    strategies.push(policy);
+  }
+  return strategies.sort((a, b) => a.fitness - b.fitness);
+};
+const aiStrategyLadder = searchAiStrategies();
+const aiStrategyForLevel = (level: number) =>
+  aiStrategyLadder[Math.round((cap(level, 1, 100) - 1) * (aiStrategyLadder.length - 1) / 99)];
 const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, carrierId: string, half: 1 | 2 = 1) => {
   const direction = Math.sign(toX - fromX);
   if (!direction) return tokens;
@@ -677,10 +794,12 @@ function makeMatch(
   homeRoster: Player[] = roster.filter((player) => startingPlayers.includes(player.id)),
   formation: TacticalFormation = defaultFormation,
   assignments: Record<string, string> = {},
+  awayFormation: TacticalFormation = defaultFormation,
+  awayAssignments: Record<string, string> = {},
 ): Match {
   const homeFormationXI = assignFormationPlayers(homeRoster, formation, assignments);
   const homeXI = format === "small-sided" ? selectSmallSidedXI(homeFormationXI) : homeFormationXI;
-  const awayFormationXI = assignFormationPlayers(away.length ? away : roster, defaultFormation);
+  const awayFormationXI = assignFormationPlayers(away.length ? away : roster, awayFormation, awayAssignments);
   const opponents = format === "small-sided"
     ? selectSmallSidedXI(awayFormationXI)
     : awayFormationXI;
@@ -742,6 +861,20 @@ function App() {
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
   const [level, setLevel] = useState(() => devToolsEnabled ? campaignStageCount : 1);
+  const [aiDifficulty, setAiDifficulty] = useState(1);
+  const [humanPlayStyle, setHumanPlayStyle] = useState<HumanPlayStyle>(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("blitz-league-ai-style") ?? "{}");
+      return {
+        shots: Number.isFinite(saved.shots) ? Math.max(0, saved.shots) : 0,
+        passes: Number.isFinite(saved.passes) ? Math.max(0, saved.passes) : 0,
+        carries: Number.isFinite(saved.carries) ? Math.max(0, saved.carries) : 0,
+        nutmegs: Number.isFinite(saved.nutmegs) ? Math.max(0, saved.nutmegs) : 0,
+      };
+    } catch {
+      return { shots: 0, passes: 0, carries: 0, nutmegs: 0 };
+    }
+  });
   const [match, setMatch] = useState<Match>(() => makeMatch([], 1, "classic"));
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
@@ -831,12 +964,7 @@ function App() {
   const selectedFormationSlot = activeFormation.slots.find((slot) => slot.id === selectedFormationSlotId)
     ?? activeFormation.slots[0];
   const selectedFormationPlayer = formationXI.find((player) => player.tacticalSlot === selectedFormationSlot?.id);
-  const awayPlayers = useMemo(() => {
-    const aiTier = Math.floor((level - 1) / 1.5);
-    return selectXI(roster.filter((player) =>
-      startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= aiTier + 1,
-    ))
-  }, [level]);
+  const awayPlayers = useMemo(() => aiOpponentRoster(aiDifficulty), [aiDifficulty]);
   const goalTarget = match.format === "golden-goal" ? 1 : match.format === "small-sided" ? 2 : 3;
   const matchIsSmallSided = match.format === "small-sided";
   const scoreLabel = `${match.score[0]} — ${match.score[1]}`;
@@ -852,6 +980,8 @@ function App() {
       return { ...current, [activeFormationId]: next };
     });
   };
+  const recordPlayerAction = (action: keyof HumanPlayStyle) =>
+    setHumanPlayStyle((style) => ({ ...style, [action]: style[action] + 1 }));
 
   const buyDailyOffer = (player: Player) => {
     const offerKey = `${dailyOfferDateKey}:${player.id}`;
@@ -955,7 +1085,7 @@ function App() {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; aiDifficulty?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
         if (data.progressionVersion !== currentSaveVersion) {
           window.localStorage.removeItem("soccer-baseboard-save");
           setNotice("Blitz League has started a fresh season. Your regular starting squad is ready.");
@@ -1014,6 +1144,9 @@ function App() {
         if (data.activeFormat && formats.some((f) => f.id === data.activeFormat
           && (f.unlock <= passLevel || savedFormats.includes(f.id)))) setActiveFormat(data.activeFormat);
         if (typeof data.level === "number") setLevel(data.level);
+        if (typeof data.aiDifficulty === "number" && Number.isFinite(data.aiDifficulty)) {
+          setAiDifficulty(cap(Math.round(data.aiDifficulty), 1, 100));
+        }
         if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
         if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
         if (typeof data.endTurnKey === "string" || data.endTurnKey === null) setEndTurnKey(data.endTurnKey);
@@ -1031,12 +1164,17 @@ function App() {
     window.localStorage.setItem("blitz-league-save", JSON.stringify({
       xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedFormations,
       activeFormationId, formationAssignments, unlockedTeamColors, homeKitColorId, awayKitColorId,
-      dailyOfferPurchases, activeFormat, level,
+      dailyOfferPurchases, activeFormat, level, aiDifficulty,
       captionsEnabled, captionSize, endTurnKey,
     }));
   }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
-    unlockedFormations, activeFormationId, formationAssignments, dailyOfferPurchases, activeFormat, level,
+    unlockedFormations, activeFormationId, formationAssignments, dailyOfferPurchases, activeFormat, level, aiDifficulty,
     captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
+
+  useEffect(() => {
+    if (!saveReady || devToolsEnabled) return;
+    window.localStorage.setItem("blitz-league-ai-style", JSON.stringify(humanPlayStyle));
+  }, [humanPlayStyle, saveReady, devToolsEnabled]);
 
   useEffect(() => {
     if (screen !== "store") return;
@@ -1123,7 +1261,10 @@ function App() {
 
   function startCpuQuickplay() {
     setPassMode(false);
-    const initial = makeMatch(awayPlayers, level, activeFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {});
+    const strategy = aiStrategyForLevel(aiDifficulty);
+    const cpuLineup = chooseAiFormation(awayPlayers, strategy, humanPlayStyle);
+    const initial = makeMatch(awayPlayers, aiDifficulty, activeFormat, homePlayers, activeFormation,
+      formationAssignments[activeFormationId] ?? {}, cpuLineup.formation, cpuLineup.assignments);
     initial.message = "CPU Quickplay · You control the home team. Select a player, then choose a highlighted tile to move.";
     setQuickplaySide(null);
     setQuickplayMode("cpu");
@@ -1135,12 +1276,13 @@ function App() {
     if (nextLevel > level || nextLevel > campaignStageCount) return;
     setPassMode(false);
     stopQuickplay();
-    const stageAiTier = Math.floor((nextLevel - 1) / 1.5) + 1;
-    const stageOpponentXI = selectXI(roster.filter((player) =>
-      startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= stageAiTier,
-    ));
+    const stageDifficulty = Math.min(100, nextLevel);
+    const stageOpponentXI = aiOpponentRoster(stageDifficulty);
     const stageFormat = campaignFormatForStage(nextLevel);
-    setMatch(makeMatch(stageOpponentXI, nextLevel, stageFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {}));
+    const stageStrategy = aiStrategyForLevel(stageDifficulty);
+    const stageLineup = chooseAiFormation(stageOpponentXI, stageStrategy, humanPlayStyle);
+    setMatch(makeMatch(stageOpponentXI, nextLevel, stageFormat, homePlayers, activeFormation,
+      formationAssignments[activeFormationId] ?? {}, stageLineup.formation, stageLineup.assignments));
     setScreen("match");
   }
 
@@ -1202,12 +1344,36 @@ function App() {
     const latest = latestMatch.current;
     if (quickplaySide !== null || latest.turn !== "away" || latest.finished) return;
     const ai = { ...latest, tokens: latest.tokens.map((t) => ({ ...t })) };
+    const aiDifficultyLevel = cap(latest.campaignStage, 1, 100);
+    const strategy = aiStrategyForLevel(aiDifficultyLevel);
+    const playCount = Math.max(1, humanPlayStyle.shots + humanPlayStyle.passes
+      + humanPlayStyle.carries + humanPlayStyle.nutmegs);
+    const passTendency = humanPlayStyle.passes / playCount;
+    const shotTendency = humanPlayStyle.shots / playCount;
+    const nutmegTendency = humanPlayStyle.nutmegs / playCount;
     const expireHomeStealProtection = ai.stealProtectedSide === "home";
     const owner = ai.tokens.find((t) => t.side === "away" && t.x === ai.ball.x && t.y === ai.ball.y);
     if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
-      if (goalDistance <= 7 + Math.floor(latest.campaignStage / 3)) {
-        const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
+      const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
+      const receiver = ai.tokens.filter((token) => token.side === "away" && token.player.id !== owner.player.id
+        && distance(owner, token) <= 4 + passingBonus(owner.player)
+        && ownGoalDistance(token, latest.half) < goalDistance)
+        .sort((a, b) => ownGoalDistance(a, latest.half) - distance(a, owner)
+          - (ownGoalDistance(b, latest.half) - distance(b, owner)))[0];
+      const passInterceptor = receiver
+        ? findInterceptor(ai.tokens, "away", lineCells(owner, receiver).slice(0, -1))
+        : undefined;
+      const choosePass = !!receiver && !passInterceptor
+        && (goalDistance > shotRange(owner.player) || chance < 48)
+        && Math.random() < strategy.passing * (0.25 + passTendency * 0.6);
+      if (choosePass && receiver) {
+        ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
+        const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
+        if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
+        ai.message = `The opposition finds ${receiver.player.name} in space with a weighted pass.`;
+      } else if (goalDistance <= shotRange(owner.player)
+        && (goalDistance <= 2 || chance >= 24 + (1 - strategy.finishing) * 28)) {
         const goal = { x: latest.half === 1 ? 0 : 21, y: 5 };
         const interception = findInterceptor(ai.tokens, "away", lineCells(owner, goal));
         if (interception && Math.random() * 100 < interceptionChance(interception.token, "shot", interception.gap)) {
@@ -1270,7 +1436,19 @@ function App() {
       const carrier = ai.tokens.find((t) => t.x === ai.ball.x && t.y === ai.ball.y);
       if (carrier?.side === "home") {
         const pressers = ai.tokens.filter((t) => t.side === "away")
-          .sort((a, b) => distance(a, carrier) - distance(b, carrier));
+          .sort((a, b) => {
+            const receiverThreat = (presser: Token) => ai.tokens
+              .filter((token) => token.side === "home" && token.player.id !== carrier.player.id)
+              .reduce((best, teammate) => Math.min(best, distance(presser, teammate)), 99);
+            const aThreat = receiverThreat(a);
+            const bThreat = receiverThreat(b);
+            const homeGoalX = ai.half === 1 ? 0 : 21;
+            const aLane = Math.abs(a.x - homeGoalX) + Math.abs(a.y - carrier.y);
+            const bLane = Math.abs(b.x - homeGoalX) + Math.abs(b.y - carrier.y);
+            return distance(a, carrier) - distance(b, carrier)
+              - (passTendency * strategy.marking * (bThreat - aThreat) * 0.45)
+              - (shotTendency * strategy.marking * (bLane - aLane) * 0.25);
+          });
         const presser = pressers[0];
         if (presser && adjacent(presser, carrier)) {
           if (ai.stealProtectedSide === "home") {
@@ -1293,12 +1471,12 @@ function App() {
             }
           }
         } else if (presser) {
-          const pressureTargets = [
-            { x: carrier.x - 1, y: carrier.y - 1 }, { x: carrier.x, y: carrier.y - 1 },
-            { x: carrier.x + 1, y: carrier.y - 1 }, { x: carrier.x - 1, y: carrier.y },
-            { x: carrier.x + 1, y: carrier.y }, { x: carrier.x - 1, y: carrier.y + 1 },
-            { x: carrier.x, y: carrier.y + 1 }, { x: carrier.x + 1, y: carrier.y + 1 },
-          ];
+          const pressureDistance = nutmegTendency > 0.16 && strategy.marking > 0.55
+            ? 2
+            : strategy.pressing > 0.65 ? 1 : 2;
+          const pressureTargets = Array.from({ length: 11 }, (_, y) =>
+            Array.from({ length: 22 }, (_, x) => ({ x, y })),
+          ).flat().filter((point) => Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y)) === pressureDistance);
           const route = findRouteToTargets(ai.tokens, presser, pressureTargets);
           const moveDistance = 2 + movementBonus(presser.player);
           const next = route[Math.min(moveDistance, route.length) - 1];
@@ -1319,7 +1497,8 @@ function App() {
           && (!nearestHome || distance(nearestAway, ai.ball) < distance(nearestHome, ai.ball))
           && !ai.tokens.some((token) => token.x === ai.ball.x && token.y === ai.ball.y)) {
           const route = findRouteToTargets(ai.tokens, nearestAway, [ai.ball]);
-          const moveDistance = 2 + movementBonus(nearestAway.player);
+          const moveDistance = 2 + movementBonus(nearestAway.player)
+            + (strategy.countering > 0.75 ? 1 : 0);
           const next = route[Math.min(moveDistance, route.length) - 1];
           if (next) {
             nearestAway.x = next.x;
@@ -1412,6 +1591,7 @@ function App() {
       setMatch({ ...match, message: "That tile is occupied. Try an open square." });
       return;
     }
+    if (hasBall) recordPlayerAction("carries");
     let updated = {
       ...match,
       drivesUsed: match.drivesUsed + 1,
@@ -1453,6 +1633,7 @@ function App() {
       setMatch({ ...match, message: `${player.player.name} is too far out. Max range: ${range} tiles.` });
       return;
     }
+    recordPlayerAction("shots");
     const angle = shotAngleDegrees(player, match.half);
     const accuracy = shotAccuracy(player, match.tokens, dist, angle);
     const goal = {
@@ -1576,6 +1757,7 @@ function App() {
       return;
     }
     const interceptionPath = lineCells(player, receiver).slice(0, -1);
+    recordPlayerAction("passes");
     const interceptor = findInterceptor(match.tokens, player.side, interceptionPath);
     if (interceptor && Math.random() * 100 < interceptionChance(interceptor.token, "pass", interceptor.gap)) {
       const tokens = shiftFormationWithBall(match.tokens, match.ball.x, interceptor.token.x, interceptor.token.player.id, match.half);
@@ -1658,6 +1840,7 @@ function App() {
       setMatch({ ...match, message: "A defender must be next to you to attempt a nutmeg." });
       return;
     }
+    recordPlayerAction("nutmegs");
     const dx = Math.sign(defender.x - player.x);
     const dy = Math.sign(defender.y - player.y);
     const behindX = defender.x + dx;
@@ -1850,6 +2033,7 @@ function App() {
         .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
+        .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
         .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#929d93;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#b8f36b18;border-color:#b8f36b75;color:#b8f36b}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0d1110}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}
@@ -1960,8 +2144,8 @@ function App() {
         <button className="ghost-btn" onClick={() => setScreen("home")}>← DASHBOARD</button>
         <div className="eyebrow" style={{ marginTop: 25 }}>Your road to the final</div>
         <h1>Campaign</h1>
-        <p className="subtitle">All {campaignStageCount} levels are shown. Win the current match to unlock the next; locked matches cannot be started early.</p>
-        <div className="pass-banner"><h2>{level > campaignStageCount ? "Campaign complete" : `Next up: Level ${level}`}</h2><p>{level > campaignStageCount ? "You have beaten every campaign level. Replay any level whenever you like." : `${Math.max(0, Math.min(level - 1, campaignStageCount))} of ${campaignStageCount} levels complete · earn ${100 * level} XP for a win at this stage, with larger rewards as the campaign advances.`}</p></div>
+        <p className="subtitle">All {campaignStageCount} levels are shown. Win the current match to unlock the next; locked matches cannot be started early. AI difficulty climbs from Level 1 to its strongest researched policy at Level 100.</p>
+        <div className="pass-banner"><h2>{level > campaignStageCount ? "Campaign complete" : `Next up: Level ${level}`}</h2><p>{level > campaignStageCount ? "You have beaten every campaign level. Replay any level whenever you like." : `${Math.max(0, Math.min(level - 1, campaignStageCount))} of ${campaignStageCount} levels complete · earn ${100 * level} XP and ${30 + level * 5} coins for a win at this stage.`}</p></div>
         <div className="campaign-levels">{campaignStageNames.map((name, index) => {
           const stage = index + 1;
           const unlocked = stage <= level;
@@ -1970,7 +2154,7 @@ function App() {
           return <button key={stage} className={`campaign-level ${unlocked ? "available" : "locked"}`} disabled={!unlocked} onClick={() => startMatch(stage)}>
             <h3>LEVEL {String(stage).padStart(2, "0")} {completed ? "· COMPLETE" : ""}</h3>
             <strong>{name}</strong>
-            <p>{campaignFormatLabel(stage)} · AI level {Math.ceil(stage / 2)} · {100 * stage} XP · first to {stageFormat === "golden-goal" ? 1 : stageFormat === "small-sided" ? 2 : 3} goals</p>
+            <p>{campaignFormatLabel(stage)} · AI level {Math.min(stage, 100)} · {100 * stage} XP · {30 + stage * 5} coins · first to {stageFormat === "golden-goal" ? 1 : stageFormat === "small-sided" ? 2 : 3} goals</p>
             <span className="badge">{completed ? "REPLAY" : unlocked ? "PLAY LEVEL →" : "🔒 BEAT LEVEL " + (stage - 1)}</span>
           </button>;
         })}</div>
@@ -2179,6 +2363,14 @@ function App() {
             {formatUnlocked(format) ? activeFormat === format.id ? "SELECTED" : "SELECT MODE" : `UNLOCK AT LEVEL ${format.unlock}`}
           </button>
         </article>)}</div>
+        <section className="settings-card ai-difficulty">
+          <div className="panel-heading"><h2>CPU difficulty · Level {aiDifficulty}</h2><span>100 strategic levels</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7, margin: 0 }}>Choose any CPU level for Quickplay. The level ladder ranks the weakest policy at 1 and the strongest at 100; higher levels also field stronger MLS players and evaluate every formation, including custom ones.</p>
+          <input aria-label="CPU AI difficulty" type="range" min="1" max="100" step="1" value={aiDifficulty}
+            onChange={(event) => setAiDifficulty(Number(event.target.value))} />
+          <div className="ai-difficulty-scale"><span>1 · WEAKEST STRATEGY</span><span>100 · TOP STRATEGY</span></div>
+          <p className="ai-difficulty-note">Strategy search benchmarked {AI_POLICY_SEARCH_SIZE.toLocaleString()} tactical policies across attack, defense, counters, and opponent styles. The AI also learns your local tendencies—shots, passes, carries, and nutmegs—on this device ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed).</p>
+        </section>
         <div className="quickplay-options">
           <button className="quickplay-option" onClick={startCpuQuickplay}>
             <span className="quickplay-icon">🤖</span>

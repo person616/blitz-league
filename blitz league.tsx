@@ -2774,6 +2774,8 @@ function App() {
           <div className="ai-difficulty-scale"><span>1 · WEAKEST STRATEGY</span><span>100 · TOP STRATEGY</span></div>
           <p className="ai-difficulty-note">The CPU combines tactical defense and local opponent adaptation with a pass/carry/shot model trained on {realMatchPolicy.matchesWithEvents.toLocaleString()} real match event files. Higher levels field stronger players and use the trained action preferences more consistently. The model is trained and validated from separate matches; its defensive positioning remains rule-based.</p>
           <p className="small-note" style={{ lineHeight: 1.7, margin: "10px 0 0" }}>
+            <img src={`${import.meta.env.BASE_URL}statsbomb-icon.svg`} alt="StatsBomb" width="18" height="18"
+              style={{ display: "inline-block", verticalAlign: "middle", marginRight: 6, borderRadius: 3 }} />
             Data credit: <a href="https://github.com/hudl/open-data" target="_blank" rel="noreferrer">StatsBomb Open Data</a>.
             The CPU also adapts to your local tendencies—shots, passes, carries, and nutmegs ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed).
           </p>

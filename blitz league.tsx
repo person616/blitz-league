@@ -22,6 +22,7 @@ type Player = {
   ability: string;
   abilityType: AbilityType;
   abilityStat: number;
+  clearing?: number;
   color: string;
   tacticalSlot?: string;
   tacticalX?: number;
@@ -61,7 +62,7 @@ const roster: Player[] = [
   { id: "puig", name: "Riqui Puig", club: "LA Galaxy", position: "MID", rating: 91, ability: "Playmaker · progressive passing", abilityType: "playmaking", abilityStat: 95, color: "#8b73dc" },
   { id: "morris", name: "Jordan Morris", club: "Seattle Sounders FC", position: "FWD", rating: 81, ability: "Speedster · acceleration", abilityType: "pace", abilityStat: 87, color: "#36ad83" },
   { id: "roldan", name: "Cristian Roldan", club: "Seattle Sounders FC", position: "MID", rating: 76, ability: "Engine · work rate", abilityType: "pace", abilityStat: 78, color: "#36ad83" },
-  { id: "frei", name: "Stefan Frei", club: "Seattle Sounders FC", position: "GK", rating: 80, ability: "Last line · shot stopping", abilityType: "goalkeeping", abilityStat: 86, color: "#36ad83" },
+  { id: "frei", name: "Stefan Frei", club: "Seattle Sounders FC", position: "GK", rating: 80, ability: "Last line · shot stopping", abilityType: "goalkeeping", abilityStat: 86, clearing: 83, color: "#36ad83" },
   { id: "miles", name: "Miles Robinson", club: "FC Cincinnati", position: "DEF", rating: 79, ability: "Recovery · defensive coverage", abilityType: "defending", abilityStat: 84, color: "#ed794a" },
   { id: "moore", name: "DeAndre Yedlin", club: "Inter Miami CF", position: "DEF", rating: 72, ability: "Overlap · recovery pace", abilityType: "pace", abilityStat: 77, color: "#f36b87" },
   { id: "vela", name: "Carlos Vela", club: "LAFC", position: "FWD", rating: 91, ability: "Curling strike · shot placement", abilityType: "finishing", abilityStat: 94, color: "#f5b942" },
@@ -69,7 +70,7 @@ const roster: Player[] = [
   { id: "mukhtar", name: "Hany Mukhtar", club: "Nashville SC", position: "MID", rating: 91, ability: "MVP vision · chance creation", abilityType: "playmaking", abilityStat: 95, color: "#eac84b" },
   { id: "cucho", name: "Cucho Hernández", club: "Columbus Crew", position: "FWD", rating: 93, ability: "Clinical · finishing", abilityType: "finishing", abilityStat: 94, color: "#f1c94e" },
   { id: "benteke", name: "Christian Benteke", club: "D.C. United", position: "FWD", rating: 82, ability: "Target forward · finishing", abilityType: "finishing", abilityStat: 83, color: "#e4e8df" },
-  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 93, ability: "Wall · shot stopping", abilityType: "goalkeeping", abilityStat: 97, color: "#ef5145" },
+  { id: "burki", name: "Roman Bürki", club: "St. Louis CITY SC", position: "GK", rating: 93, ability: "Wall · shot stopping", abilityType: "goalkeeping", abilityStat: 97, clearing: 91, color: "#ef5145" },
   { id: "acosta", name: "Luciano Acosta", club: "FC Cincinnati", position: "MID", rating: 87, ability: "Creator · close control", abilityType: "dribbling", abilityStat: 89, color: "#ed794a" },
   { id: "almada", name: "Thiago Almada", club: "Atlanta United", position: "MID", rating: 84, ability: "Quick feet · creative passing", abilityType: "playmaking", abilityStat: 86, color: "#c93642" },
   { id: "evander", name: "Evander", club: "Portland Timbers", position: "MID", rating: 84, ability: "Long-range threat · shot placement", abilityType: "finishing", abilityStat: 85, color: "#37a86c" },
@@ -144,6 +145,7 @@ const additionalRoster: Player[] = additionalMlsPlayers.map(([id, name, club, po
     ability,
     abilityType,
     abilityStat: Math.max(42, Math.min(91, rating + ((index * 13) % 9) - 4)),
+    clearing: position === "GK" ? Math.max(45, Math.min(96, rating + ((index * 11) % 17) - 5)) : undefined,
     color,
   };
 });
@@ -267,7 +269,9 @@ const kitColors: KitColor[] = [
   { id: "charcoal", name: "Charcoal", value: "#525e58" },
 ];
 const dailyOfferPlayers = roster.filter((player) => overallRating(player) >= 82);
-const meanPlayerStats = (player: Player) => Math.round((player.rating + player.abilityStat) / 2);
+const meanPlayerStats = (player: Player) => player.position === "GK"
+  ? Math.round((player.rating + player.abilityStat + goalkeeperClearing(player)) / 3)
+  : Math.round((player.rating + player.abilityStat) / 2);
 const dailyOfferPrice = (player: Player) => 180 + Math.max(0, overallRating(player) - 82) * 28;
 const dailyPlayerOffers = (date: Date) => {
   const dayKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
@@ -445,7 +449,7 @@ const shotRange = (player: Player) =>
 const nutmegChance = (player: Player) =>
   cap(50 + abilityEffect(player, "dribbling") * 0.1, 45, 56);
 const abilityDescription = (player: Player) =>
-  `${player.ability} · Ability ${player.abilityStat} ×2 (${player.abilityType}) · OVR ${overallRating(player)}`;
+  `${player.ability} · Ability ${player.abilityStat} ×2 (${player.abilityType})${player.position === "GK" ? ` · Clearing ${goalkeeperClearing(player)}` : ""} · OVR ${overallRating(player)}`;
 const displayKey = (code: string | null) => {
   if (!code) return "UNBOUND";
   if (code.startsWith("Key")) return code.slice(3);
@@ -456,6 +460,50 @@ const displayKey = (code: string | null) => {
 const goalkeeperPenalty = (tokens: Token[], attackingSide: "home" | "away") => {
   const keeper = tokens.find((token) => token.side !== attackingSide && token.player.position === "GK");
   return keeper ? cap(Math.round(abilityEffect(keeper.player, "goalkeeping") * 0.12), 0, 5) : 0;
+};
+const goalkeeperClearing = (player: Player) => player.clearing ?? (player.position === "GK" ? player.rating : 50);
+const defendingGoalX = (side: "home" | "away", half: 1 | 2) =>
+  side === "home" ? (half === 1 ? 0 : 21) : (half === 1 ? 21 : 0);
+const isInOwnPenaltyBox = (token: Token, half: 1 | 2) =>
+  Math.abs(token.x - defendingGoalX(token.side, half)) <= 2 && Math.abs(token.y - 5) <= 3;
+const goalkeeperClearRange = (player: Player) =>
+  cap(12 + Math.round(goalkeeperClearing(player) / 10), 15, 20);
+const goalkeeperClearAccuracy = (player: Player, distanceToTarget: number) =>
+  cap(88 - Math.max(0, distanceToTarget - 5) * 2.8 + (goalkeeperClearing(player) - 50) * 0.45, 12, 88);
+const goalkeeperClearTarget = (keeper: Token, half: 1 | 2) => {
+  const attackDirection = keeper.side === "home"
+    ? (half === 1 ? 1 : -1)
+    : (half === 1 ? -1 : 1);
+  return {
+    x: cap(keeper.x + attackDirection * goalkeeperClearRange(keeper.player), 1, 20),
+    y: 5,
+  };
+};
+const resolveGoalkeeperClearance = (match: Match, keeper: Token) => {
+  const attackDirection = keeper.side === "home"
+    ? (match.half === 1 ? 1 : -1)
+    : (match.half === 1 ? -1 : 1);
+  const target = goalkeeperClearTarget(keeper, match.half);
+  const clearDistance = distance(keeper, target);
+  const accuracy = goalkeeperClearAccuracy(keeper.player, clearDistance);
+  let landing = target;
+  if (Math.random() * 100 >= accuracy) {
+    const missDistance = 1 + Math.floor(Math.random() * Math.max(1, Math.ceil((100 - accuracy) / 24)));
+    const rowOffset = Math.floor(Math.random() * (missDistance * 2 + 1)) - missDistance;
+    landing = {
+      x: cap(target.x - attackDirection * missDistance, 1, 20),
+      y: cap(target.y + rowOffset, 0, 10),
+    };
+  }
+  const collector = match.tokens.find((token) => token.x === landing.x && token.y === landing.y);
+  return {
+    ...match,
+    ball: landing,
+    stealProtectedSide: undefined,
+    message: collector && collector.side !== keeper.side
+      ? `${collector.player.name} intercepts ${keeper.player.name}'s long clearance (${accuracy}% accuracy).`
+      : `${keeper.player.name} clears ${clearDistance} tiles upfield. The target was ${accuracy}% accurate; the ball lands at ${landing.x}, ${landing.y}.`,
+  };
 };
 const defenderPenalty = (tokens: Token[], attacker: Token) => {
   const marker = tokens.filter((token) => token.side !== attacker.side && token.player.position === "DEF")
@@ -806,7 +854,7 @@ const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, car
     && token.player.position === "FWD"
     && (token.x - carrier.x) * attackDirection > -4)
     .forEach((forward) => {
-      const targetX = cap(carrier.x - attackDirection * 4, 0, 21);
+      const targetX = cap(carrier.x + attackDirection * 4, 0, 21);
       occupied.delete(`${forward.x},${forward.y}`);
       const candidateRows = Array.from({ length: 11 }, (_, y) => y)
         .sort((a, b) => Math.abs(a - forward.y) - Math.abs(b - forward.y));
@@ -1521,7 +1569,12 @@ function App() {
     const originalScore = ai.score[1];
     const originalBall = `${ai.ball.x},${ai.ball.y}`;
     const owner = ai.tokens.find((t) => t.side === "away" && t.x === ai.ball.x && t.y === ai.ball.y);
-    if (owner) {
+    if (owner && owner.player.position === "GK" && isInOwnPenaltyBox(owner, ai.half)) {
+      const clearance = resolveGoalkeeperClearance(ai, owner);
+      ai.ball = clearance.ball;
+      ai.stealProtectedSide = undefined;
+      ai.message = clearance.message;
+    } else if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
       const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
       const receiver = ai.tokens.filter((token) => token.side === "away" && token.player.id !== owner.player.id
@@ -1610,6 +1663,10 @@ function App() {
       if (carrier?.side === "home") {
         const pressers = ai.tokens.filter((t) => t.side === "away")
           .sort((a, b) => {
+            const highPress = ownGoalDistance(carrier, ai.half) > 8;
+            const roleFit = (presser: Token) => highPress
+              ? presser.player.position === "FWD" ? 0 : presser.player.position === "MID" ? 1 : presser.player.position === "DEF" ? 3 : 20
+              : presser.player.position === "DEF" ? 0 : presser.player.position === "MID" ? 2 : presser.player.position === "FWD" ? 4 : 20;
             const receiverThreat = (presser: Token) => ai.tokens
               .filter((token) => token.side === "home" && token.player.id !== carrier.player.id)
               .reduce((best, teammate) => Math.min(best, distance(presser, teammate)), 99);
@@ -1619,6 +1676,7 @@ function App() {
             const aLane = Math.abs(a.x - homeGoalX) + Math.abs(a.y - carrier.y);
             const bLane = Math.abs(b.x - homeGoalX) + Math.abs(b.y - carrier.y);
             return distance(a, carrier) - distance(b, carrier)
+              + (roleFit(a) - roleFit(b)) * (0.6 + strategy.marking)
               - (passTendency * strategy.marking * (bThreat - aThreat) * 0.45)
               - (shotTendency * strategy.marking * (bLane - aLane) * 0.25);
           });
@@ -1727,6 +1785,7 @@ function App() {
             return -Math.abs(gap - desiredGap) * 4 - laneGap * (0.6 + strategy.marking)
               + goalSide * strategy.marking * 3
               + (defender.player.position === "DEF" ? strategy.marking * 1.5 : 0)
+              - Math.abs(point.y - 5) * 0.18
               + distance(defender, currentCarrier) * strategy.pressing * 0.05;
           }),
         })).filter((candidate): candidate is typeof candidate & {
@@ -1955,6 +2014,17 @@ function App() {
       };
       endTurn(updated);
     }
+  }
+
+  function clearBall() {
+    const activeSide = activeSideForClient();
+    const keeper = match.tokens.find((token) => token.player.id === match.selected && token.side === activeSide);
+    if (!keeper || keeper.player.position !== "GK" || !isInOwnPenaltyBox(keeper, match.half)
+      || keeper.x !== match.ball.x || keeper.y !== match.ball.y || !ownTurn || !canAct) {
+      setMatch({ ...match, message: "Select your goalkeeper with the ball inside your penalty box to clear." });
+      return;
+    }
+    endTurn(resolveGoalkeeperClearance(match, keeper));
   }
 
   function pass() {
@@ -2199,6 +2269,13 @@ function App() {
   const pitchCameraY = selectedPlayer ? cap((selectedPlayer.y / 10) * 100 - 35.714, 0, 28.572) : 14.286;
   const canAct = match.actionsUsed < 1 + match.bonusActions;
   const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= shotRange(selectedPlayer.player);
+  const canShowGoalkeeperClear = selectedPlayer?.side === activeSide
+    && selectedPlayer.player.position === "GK" && isInOwnPenaltyBox(selectedPlayer, match.half);
+  const clearTarget = canShowGoalkeeperClear ? goalkeeperClearTarget(selectedPlayer, match.half) : null;
+  const clearDistance = clearTarget && selectedPlayer ? distance(selectedPlayer, clearTarget) : 0;
+  const clearAccuracy = selectedPlayer ? goalkeeperClearAccuracy(selectedPlayer.player, clearDistance) : 0;
+  const canClear = canShowGoalkeeperClear && canAct
+    && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y;
   const nutmegDefender = selectedPlayer && canAct
     && selectedPlayer.side === activeSide
     && selectedPlayer.x === match.ball.x
@@ -2453,8 +2530,8 @@ function App() {
           return <article className="store-card" key={player.id}>
             <div className="store-kicker">{player.position} · {player.club}</div>
             <h3 style={{ marginTop: 9 }}>{player.name}</h3>
-            <p>{player.ability}</p>
-            <div className="roster-meta"><span>MEAN STATS · {player.rating} RATING + {player.abilityStat} ABILITY</span><strong>{meanPlayerStats(player)} AVG</strong></div>
+            <p>{player.ability}{player.position === "GK" ? ` · Clearing ${goalkeeperClearing(player)}` : ""}</p>
+            <div className="roster-meta"><span>MEAN STATS · {player.rating} RATING + {player.abilityStat} ABILITY{player.position === "GK" ? ` + ${goalkeeperClearing(player)} CLEARING` : ""}</span><strong>{meanPlayerStats(player)} AVG</strong></div>
             <button className={purchased ? "secondary sold" : owned ? "secondary" : "primary"} disabled={owned || purchased || (!devToolsEnabled && coins < price)}
               onClick={() => buyDailyOffer(player)}>
               {owned ? "IN YOUR SQUAD" : purchased ? "SOLD TODAY" : `SIGN · ◈ ${price}`}
@@ -2735,6 +2812,7 @@ function App() {
           <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#8e998f" }}>Select a player on the pitch</small>}</section>
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
             <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
+            {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${clearAccuracy}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
             <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passingRange} tiles`}</span></button>
             <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
             <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>

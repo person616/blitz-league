@@ -588,6 +588,41 @@ const findRouteToTargets = (
   }
   return route;
 };
+const findBestReachableMove = (
+  tokens: Token[],
+  mover: Token,
+  maxSteps: number,
+  score: (point: { x: number; y: number }) => number,
+) => {
+  const occupied = new Set(tokens
+    .filter((token) => token.player.id !== mover.player.id)
+    .map((token) => `${token.x},${token.y}`));
+  const startKey = `${mover.x},${mover.y}`;
+  const queue = [{ x: mover.x, y: mover.y, steps: 0 }];
+  const visited = new Set([startKey]);
+  let best: { x: number; y: number; score: number } | undefined;
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    if (current.steps > 0) {
+      const currentScore = score(current);
+      if (!best || currentScore > best.score) best = { x: current.x, y: current.y, score: currentScore };
+    }
+    if (current.steps >= maxSteps) continue;
+    for (const point of [
+      { x: current.x + 1, y: current.y },
+      { x: current.x - 1, y: current.y },
+      { x: current.x, y: current.y + 1 },
+      { x: current.x, y: current.y - 1 },
+    ]) {
+      const key = `${point.x},${point.y}`;
+      if (point.x < 0 || point.x > 21 || point.y < 0 || point.y > 10
+        || occupied.has(key) || visited.has(key)) continue;
+      visited.add(key);
+      queue.push({ ...point, steps: current.steps + 1 });
+    }
+  }
+  return best;
+};
 const resetKickoff = (tokens: Token[], side: "home" | "away", half: 1 | 2, smallSided: boolean) => {
   const homeStarts: [number, number][] = smallSided
     ? [[10, 5], [7, 3], [7, 7]]
@@ -1352,6 +1387,10 @@ function App() {
     const shotTendency = humanPlayStyle.shots / playCount;
     const nutmegTendency = humanPlayStyle.nutmegs / playCount;
     const expireHomeStealProtection = ai.stealProtectedSide === "home";
+    const originalAwayPositions = new Map(ai.tokens.filter((token) => token.side === "away")
+      .map((token) => [token.player.id, `${token.x},${token.y}`]));
+    const originalScore = ai.score[1];
+    const originalBall = `${ai.ball.x},${ai.ball.y}`;
     const owner = ai.tokens.find((t) => t.side === "away" && t.x === ai.ball.x && t.y === ai.ball.y);
     if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
@@ -1421,7 +1460,12 @@ function App() {
           y: index + 2,
         })));
         const moveDistance = 2 + movementBonus(owner.player);
-        const next = route[Math.min(moveDistance, route.length) - 1];
+        const next = route[Math.min(moveDistance, route.length) - 1]
+          ?? findBestReachableMove(ai.tokens, owner, moveDistance, (point) =>
+            -ownGoalDistance({ ...owner, x: point.x, y: point.y }, ai.half) * 3
+              - Math.abs(point.y - 5) * 0.3
+              - ai.tokens.filter((token) => token.side === "home")
+                .reduce((nearest, defender) => Math.min(nearest, distance(point, defender)), 99) * 0.1);
         if (next) {
           const previousBallX = ai.ball.x;
           owner.x = next.x;
@@ -1479,7 +1523,19 @@ function App() {
           ).flat().filter((point) => Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y)) === pressureDistance);
           const route = findRouteToTargets(ai.tokens, presser, pressureTargets);
           const moveDistance = 2 + movementBonus(presser.player);
-          const next = route[Math.min(moveDistance, route.length) - 1];
+          const next = route[Math.min(moveDistance, route.length) - 1]
+            ?? findBestReachableMove(ai.tokens, presser, moveDistance, (point) => {
+              const goalX = ai.half === 1 ? 0 : 21;
+              const pathToGoal = lineCells(carrier, { x: goalX, y: 5 });
+              const laneGap = Math.min(...pathToGoal.map((pathPoint) =>
+                Math.abs(point.x - pathPoint.x) + Math.abs(point.y - pathPoint.y)));
+              const carrierGap = Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y));
+              const goalSide = (point.x - carrier.x) * (goalX - carrier.x) >= 0 ? 1 : 0;
+              return -Math.abs(carrierGap - pressureDistance) * 4
+                - laneGap * (0.6 + strategy.marking)
+                + goalSide * strategy.marking * 3
+                + (presser.player.position === "DEF" ? strategy.marking * 1.5 : 0);
+            });
           if (next) {
             presser.x = next.x;
             presser.y = next.y;
@@ -1494,12 +1550,15 @@ function App() {
         const nearestHome = ai.tokens.filter((token) => token.side === "home")
           .sort((a, b) => distance(a, ai.ball) - distance(b, ai.ball))[0];
         if (nearestAway
-          && (!nearestHome || distance(nearestAway, ai.ball) < distance(nearestHome, ai.ball))
+          && (!nearestHome || distance(nearestAway, ai.ball) <= distance(nearestHome, ai.ball) + 2)
           && !ai.tokens.some((token) => token.x === ai.ball.x && token.y === ai.ball.y)) {
           const route = findRouteToTargets(ai.tokens, nearestAway, [ai.ball]);
           const moveDistance = 2 + movementBonus(nearestAway.player)
             + (strategy.countering > 0.75 ? 1 : 0);
-          const next = route[Math.min(moveDistance, route.length) - 1];
+          const next = route[Math.min(moveDistance, route.length) - 1]
+            ?? findBestReachableMove(ai.tokens, nearestAway, moveDistance, (point) =>
+              -distance(point, ai.ball) * 2
+                + (nearestHome ? Math.max(0, distance(point, nearestHome) - distance(point, ai.ball)) * 0.4 : 0));
           if (next) {
             nearestAway.x = next.x;
             nearestAway.y = next.y;
@@ -1514,6 +1573,67 @@ function App() {
           }
         } else {
           ai.message = "The ball is loose. Your team has the better chance to reach it next turn.";
+        }
+      }
+    }
+    const awayMoved = ai.tokens.some((token) =>
+      token.side === "away" && originalAwayPositions.get(token.player.id) !== `${token.x},${token.y}`,
+    );
+    if (!awayMoved && ai.score[1] === originalScore && `${ai.ball.x},${ai.ball.y}` === originalBall) {
+      const currentCarrier = ai.tokens.find((token) =>
+        token.x === ai.ball.x && token.y === ai.ball.y,
+      );
+      if (currentCarrier?.side === "home") {
+        const goalX = ai.half === 1 ? 0 : 21;
+        const pathToGoal = lineCells(currentCarrier, { x: goalX, y: 5 });
+        const defenders = ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK");
+        const bestDefender = defenders.map((defender) => ({
+          defender,
+          move: findBestReachableMove(ai.tokens, defender, 2 + movementBonus(defender.player), (point) => {
+            const laneGap = Math.min(...pathToGoal.map((pathPoint) =>
+              Math.abs(point.x - pathPoint.x) + Math.abs(point.y - pathPoint.y)));
+            const gap = Math.max(Math.abs(point.x - currentCarrier.x), Math.abs(point.y - currentCarrier.y));
+            const desiredGap = nutmegTendency > 0.16 && strategy.marking > 0.55 ? 2 : 1;
+            const goalSide = (point.x - currentCarrier.x) * (goalX - currentCarrier.x) >= 0 ? 1 : 0;
+            return -Math.abs(gap - desiredGap) * 4 - laneGap * (0.6 + strategy.marking)
+              + goalSide * strategy.marking * 3
+              + (defender.player.position === "DEF" ? strategy.marking * 1.5 : 0)
+              + distance(defender, currentCarrier) * strategy.pressing * 0.05;
+          }),
+        })).filter((candidate): candidate is typeof candidate & {
+          move: NonNullable<typeof candidate.move>;
+        } => !!candidate.move).sort((a, b) => b.move.score - a.move.score)[0];
+        if (bestDefender) {
+          const { defender, move } = bestDefender;
+          ai.tokens = ai.tokens.map((token) => token.player.id === defender.player.id
+            ? { ...token, x: move.x, y: move.y }
+            : token);
+          ai.message = "The opposition's defense resets: a defender covers the shooting lane and marks the ball carrier.";
+        }
+      } else {
+        const moveTarget = currentCarrier?.side === "away"
+          ? currentCarrier
+          : ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK")
+            .sort((a, b) => distance(a, ai.ball) - distance(b, ai.ball))[0];
+        if (moveTarget) {
+          const isCarrier = currentCarrier?.player.id === moveTarget.player.id;
+          const move = findBestReachableMove(ai.tokens, moveTarget, 2 + movementBonus(moveTarget.player), (point) =>
+            isCarrier
+              ? -ownGoalDistance({ ...moveTarget, x: point.x, y: point.y }, ai.half) * 3 - Math.abs(point.y - 5) * 0.3
+              : -distance(point, ai.ball) * 2,
+          );
+          if (move) {
+            ai.tokens = ai.tokens.map((token) => token.player.id === moveTarget.player.id
+              ? { ...token, x: move.x, y: move.y }
+              : token);
+            if (isCarrier) {
+              ai.ball = { x: move.x, y: move.y };
+              ai.tokens = shiftFormationWithBall(ai.tokens, originalBall.split(",").map(Number)[0], move.x, moveTarget.player.id, ai.half);
+            }
+            ai.message = isCarrier
+              ? "The opposition finds a forward route and advances with the ball."
+              : "The opposition sends a player to contest the loose ball.";
+          }
         }
       }
     }

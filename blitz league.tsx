@@ -1862,9 +1862,10 @@ function App() {
         .store-card{background:#141a17;border:1px solid #ffffff16;border-radius:13px;padding:17px}
         .store-card h3{font-size:14px;margin:0 0 8px}.store-card p{color:#929d93;font-size:10px;line-height:1.55;min-height:32px}
         .store-card .primary,.store-card .secondary{width:100%;margin-top:12px}
-        .store-card .primary:disabled,.store-card .secondary:disabled{opacity:1;cursor:not-allowed;transform:none;box-shadow:none;filter:none}
-        .store-card .primary:disabled{background:#344137;border:1px solid #526052;color:#b1bdb1}
-        .store-card .secondary:disabled{background:#263029;border:1px solid #ffffff18;color:#89958b}
+        .store-card .primary:disabled,.store-card .secondary:disabled{opacity:1;cursor:not-allowed;transform:none;filter:none}
+        .store-card .primary:disabled{box-shadow:0 6px 25px #b8f36b1c}
+        .store-card .secondary:disabled{box-shadow:none}
+        .store-card .secondary.sold:disabled{background:#263029;border-color:#ffffff18;color:#89958b}
         .store-kicker{font:10px 'DM Mono',monospace;color:#b8f36b;letter-spacing:.08em;text-transform:uppercase}
         .store-timer{font:11px 'DM Mono',monospace;color:#f2d578}
         .kit-preview{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;border:1px solid #ffffff55;vertical-align:middle;margin-right:8px}
@@ -2019,7 +2020,7 @@ function App() {
             <h3 style={{ marginTop: 9 }}>{player.name}</h3>
             <p>{player.ability}</p>
             <div className="roster-meta"><span>MEAN STATS · {player.rating} RATING + {player.abilityStat} ABILITY</span><strong>{meanPlayerStats(player)} AVG</strong></div>
-            <button className={owned || purchased ? "secondary" : "primary"} disabled={owned || purchased || (!devToolsEnabled && coins < price)}
+            <button className={purchased ? "secondary sold" : owned ? "secondary" : "primary"} disabled={owned || purchased || (!devToolsEnabled && coins < price)}
               onClick={() => buyDailyOffer(player)}>
               {owned ? "IN YOUR SQUAD" : purchased ? "SOLD TODAY" : `SIGN · ◈ ${price}`}
             </button>

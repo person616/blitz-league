@@ -921,6 +921,7 @@ function App() {
   const [onlineSide, setOnlineSide] = useState<"home" | "away" | null>(null);
   const [onlineReady, setOnlineReady] = useState(false);
   const [showOnlineSetup, setShowOnlineSetup] = useState(false);
+  const onlineSetupRef = useRef<HTMLElement | null>(null);
   const [passMode, setPassMode] = useState(false);
   const [matchFullscreen, setMatchFullscreen] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
@@ -1300,6 +1301,12 @@ function App() {
     }
   }, [captionsEnabled]);
 
+  useEffect(() => {
+    if (showOnlineSetup) {
+      onlineSetupRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [showOnlineSetup]);
+
   function stopQuickplay() {
     onlineSocket.current?.close();
     onlineSocket.current = null;
@@ -1391,7 +1398,7 @@ function App() {
         if (packet.match.finished) setScreen("victory");
       }
     };
-    socket.onerror = () => setOnlineStatus("Online server unavailable. Complete the one-time Render setup below, then try again.");
+    socket.onerror = () => setOnlineStatus("Couldn't connect. The match server needs its one-time Render setup before you can create or join a game.");
     socket.onclose = () => {
       if (onlineSocket.current === socket) {
         onlineSocket.current = null;
@@ -2628,14 +2635,16 @@ function App() {
             <p>Two players, one device. Take turns and hand the screen to the other player. Both teams use the same squad.</p>
             <span className="badge">PASS &amp; PLAY</span>
           </button>
-          <button className={`quickplay-option ${showOnlineSetup ? "selected" : ""}`} onClick={() => setShowOnlineSetup((shown) => !shown)}>
+          <button className={`quickplay-option ${showOnlineSetup ? "selected" : ""}`}
+            aria-expanded={showOnlineSetup} aria-controls="online-game-setup"
+            onClick={() => setShowOnlineSetup(true)}>
             <span className="quickplay-icon">🌐</span>
             <strong>Online · 11v11</strong>
             <p>Create a game and share its seven-digit code. Your opponent joins with just that code.</p>
-            <span className="badge">CREATE OR JOIN ROOM</span>
+            <span className="badge">{showOnlineSetup ? "GAME SETUP OPEN" : "CREATE OR JOIN ROOM"}</span>
           </button>
         </div>
-        {showOnlineSetup && <section className="settings-card online-setup">
+        {showOnlineSetup && <section id="online-game-setup" ref={onlineSetupRef} className="settings-card online-setup">
           <div className="panel-heading"><h2>Online 1v1</h2><span>Quick join · 7-digit code</span></div>
           <p className="small-note" style={{ lineHeight: 1.7 }}>Create a game to get a room code, then share it with your opponent. To join, enter the code—no server address needed.</p>
           <div className="online-room-actions">
@@ -2645,7 +2654,7 @@ function App() {
               onChange={(event) => setJoinRoomCode(event.target.value.replace(/\D/g, "").slice(0, 7))} />
             <button className="secondary" disabled={joinRoomCode.length !== 7} onClick={() => connectOnline("join-room")}>JOIN GAME</button>
           </div>
-          {onlineStatus && <div className="store-notice" role="status">{onlineStatus}{onlineRoomCode && <> · GAME CODE <strong style={{ color: "#b8f36b", letterSpacing: ".18em", fontSize: "16px" }}>{onlineRoomCode}</strong></>}</div>}
+          {onlineStatus && <div className="store-notice" role={onlineStatus.startsWith("Couldn't connect") ? "alert" : "status"}>{onlineStatus}{onlineRoomCode && <> · GAME CODE <strong style={{ color: "#b8f36b", letterSpacing: ".18em", fontSize: "16px" }}>{onlineRoomCode}</strong></>}</div>}
           <a className="online-setup-link" href="https://render.com/deploy?repo=https://github.com/person616/blitz-league" target="_blank" rel="noreferrer">First-time setup: deploy the match server on Render</a>
         </section>}
       </div>}

@@ -22,7 +22,9 @@ The GitHub Pages site connects to a WebSocket room relay deployed on Render. Dep
 
 The free Render service may take a short time to wake when idle. Rooms are temporary and close if the creating player disconnects or the service restarts. Room codes are invitations, not account authentication; the relay is intended for casual matches and does not provide ranked-match anti-cheat or persistent sessions.
 
-Goalkeepers have a separate Clearing stat and can use Clear only while controlling the ball inside their own penalty area. Clears travel upfield toward the far end of the pitch; longer clearances are less accurate, and higher Clearing improves their accuracy. CPU movement keeps formation width, sends forwards into runs ahead of the carrier, and chooses pressers by role and field danger to create more recognizable high-press and compact defensive shapes.
+Goalkeepers have a separate Clearing stat and can use Clear only while controlling the ball inside their own penalty area. Clears are aimed at the team's most advanced outfield player, travel upfield, and become less accurate over longer distances; higher Clearing improves accuracy. Keepers stay back during team movement. Passing reach is five tiles, with a playmaking bonus extending it by one; nearby CPU defenders prioritize closing down and challenging the ball carrier.
+
+The CPU uses hand-authored, position- and match-state-aware tactical rules and local play-style adaptation. It is not a model trained on hundreds of thousands of real professional matches; that would require a sourced match dataset and a separate training pipeline.
 
 For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode is gated by Vite's development flag, skips saved progress, and is unavailable in production builds and on the public website.
 

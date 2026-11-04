@@ -444,6 +444,7 @@ const movementBonus = (player: Player) =>
   player.abilityType === "pace" && player.abilityStat >= 85 ? 1 : 0;
 const passingBonus = (player: Player) =>
   player.abilityType === "playmaking" && player.abilityStat >= 85 ? 1 : 0;
+const passingRange = (player: Player) => 5 + passingBonus(player);
 const shotRange = (player: Player) =>
   7 + (player.abilityType === "finishing" && player.abilityStat >= 90 ? 1 : 0);
 const nutmegChance = (player: Player) =>
@@ -470,22 +471,36 @@ const goalkeeperClearRange = (player: Player) =>
   cap(12 + Math.round(goalkeeperClearing(player) / 10), 15, 20);
 const goalkeeperClearAccuracy = (player: Player, distanceToTarget: number) =>
   cap(88 - Math.max(0, distanceToTarget - 5) * 2.8 + (goalkeeperClearing(player) - 50) * 0.45, 12, 88);
-const goalkeeperClearTarget = (keeper: Token, half: 1 | 2) => {
+const goalkeeperClearTarget = (keeper: Token, tokens: Token[], half: 1 | 2) => {
   const attackDirection = keeper.side === "home"
     ? (half === 1 ? 1 : -1)
     : (half === 1 ? -1 : 1);
-  return {
-    x: cap(keeper.x + attackDirection * goalkeeperClearRange(keeper.player), 1, 20),
-    y: 5,
-  };
+  const pushingPlayer = tokens.filter((token) => token.side === keeper.side && token.player.position !== "GK")
+    .sort((a, b) => {
+      const progress = (b.x - a.x) * attackDirection;
+      return progress || (b.player.position === "FWD" ? 1 : 0) - (a.player.position === "FWD" ? 1 : 0);
+    })[0];
+  const target = pushingPlayer ?? { x: keeper.x + attackDirection * goalkeeperClearRange(keeper.player), y: 5 };
+  const route = lineCells(keeper, target);
+  return route[Math.min(route.length, goalkeeperClearRange(keeper.player)) - 1]
+    ?? { x: cap(keeper.x + attackDirection * goalkeeperClearRange(keeper.player), 1, 20), y: 5 };
 };
 const resolveGoalkeeperClearance = (match: Match, keeper: Token) => {
   const attackDirection = keeper.side === "home"
     ? (match.half === 1 ? 1 : -1)
     : (match.half === 1 ? -1 : 1);
-  const target = goalkeeperClearTarget(keeper, match.half);
+  const target = goalkeeperClearTarget(keeper, match.tokens, match.half);
   const clearDistance = distance(keeper, target);
   const accuracy = goalkeeperClearAccuracy(keeper.player, clearDistance);
+  const interception = findInterceptor(match.tokens, keeper.side, lineCells(keeper, target));
+  if (interception && Math.random() * 100 < interceptionChance(interception.token, "pass", interception.gap)) {
+    return {
+      ...match,
+      ball: { x: interception.token.x, y: interception.token.y },
+      stealProtectedSide: undefined,
+      message: `${interception.token.player.name} intercepts ${keeper.player.name}'s clearance (${accuracy}% accuracy).`,
+    };
+  }
   let landing = target;
   if (Math.random() * 100 >= accuracy) {
     const missDistance = 1 + Math.floor(Math.random() * Math.max(1, Math.ceil((100 - accuracy) / 24)));
@@ -709,7 +724,7 @@ const resetKickoff = (tokens: Token[], side: "home" | "away", half: 1 | 2, small
 const pushTeamUpfield = (tokens: Token[], side: "home" | "away", half: 1 | 2 = 1) => {
   const updated = tokens.map((token) => ({ ...token }));
   const direction = side === "home" ? (half === 1 ? 1 : -1) : (half === 1 ? -1 : 1);
-  const attackers = updated.filter((token) => token.side === side)
+  const attackers = updated.filter((token) => token.side === side && token.player.position !== "GK")
     .sort((a, b) => (b.x - a.x) * direction);
   attackers.forEach((attacker) => {
     const nextX = cap(attacker.x + direction, 1, 20);
@@ -820,7 +835,9 @@ const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, car
 
   const updated = tokens.map((token) => ({
     ...token,
-    x: token.player.id === carrierId ? token.x : cap(token.x + direction, 1, 20),
+    x: token.player.id === carrierId || token.player.position === "GK"
+      ? token.x
+      : cap(token.x + direction, 1, 20),
   }));
   const movedIds = new Set(updated.filter((token) => token.player.id !== carrierId).map((token) => token.player.id));
   let changed = true;
@@ -1569,16 +1586,34 @@ function App() {
     const originalScore = ai.score[1];
     const originalBall = `${ai.ball.x},${ai.ball.y}`;
     const owner = ai.tokens.find((t) => t.side === "away" && t.x === ai.ball.x && t.y === ai.ball.y);
-    if (owner && owner.player.position === "GK" && isInOwnPenaltyBox(owner, ai.half)) {
-      const clearance = resolveGoalkeeperClearance(ai, owner);
-      ai.ball = clearance.ball;
-      ai.stealProtectedSide = undefined;
-      ai.message = clearance.message;
+    if (owner && owner.player.position === "GK") {
+      if (isInOwnPenaltyBox(owner, ai.half)) {
+        const clearance = resolveGoalkeeperClearance(ai, owner);
+        ai.ball = clearance.ball;
+        ai.stealProtectedSide = undefined;
+        ai.message = clearance.message;
+      } else {
+        const receiver = ai.tokens.filter((token) => token.side === owner.side && token.player.position !== "GK"
+          && distance(owner, token) <= passingRange(owner.player)
+          && ownGoalDistance(token, ai.half) < ownGoalDistance(owner, ai.half))
+          .sort((a, b) => ownGoalDistance(a, ai.half) - ownGoalDistance(b, ai.half))[0];
+        const interception = receiver
+          ? findInterceptor(ai.tokens, owner.side, lineCells(owner, receiver).slice(0, -1))
+          : undefined;
+        if (receiver && !interception) {
+          ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
+          const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
+          if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
+          ai.message = `${owner.player.name} stays back and plays a safe pass to ${receiver.player.name}.`;
+        } else {
+          ai.message = `${owner.player.name} holds position near the goal and protects the defensive shape.`;
+        }
+      }
     } else if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
       const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
       const receiver = ai.tokens.filter((token) => token.side === "away" && token.player.id !== owner.player.id
-        && distance(owner, token) <= 4 + passingBonus(owner.player)
+        && distance(owner, token) <= passingRange(owner.player)
         && ownGoalDistance(token, latest.half) < goalDistance)
         .sort((a, b) => ownGoalDistance(a, latest.half) - distance(a, owner)
           - (ownGoalDistance(b, latest.half) - distance(b, owner)))[0];
@@ -1661,7 +1696,7 @@ function App() {
     } else {
       const carrier = ai.tokens.find((t) => t.x === ai.ball.x && t.y === ai.ball.y);
       if (carrier?.side === "home") {
-        const pressers = ai.tokens.filter((t) => t.side === "away")
+        const pressers = ai.tokens.filter((t) => t.side === "away" && t.player.position !== "GK")
           .sort((a, b) => {
             const highPress = ownGoalDistance(carrier, ai.half) > 8;
             const roleFit = (presser: Token) => highPress
@@ -1675,7 +1710,9 @@ function App() {
             const homeGoalX = ai.half === 1 ? 0 : 21;
             const aLane = Math.abs(a.x - homeGoalX) + Math.abs(a.y - carrier.y);
             const bLane = Math.abs(b.x - homeGoalX) + Math.abs(b.y - carrier.y);
-            return distance(a, carrier) - distance(b, carrier)
+            const aClose = adjacent(a, carrier) ? -3 : 0;
+            const bClose = adjacent(b, carrier) ? -3 : 0;
+            return distance(a, carrier) - distance(b, carrier) + (aClose - bClose) * 3
               + (roleFit(a) - roleFit(b)) * (0.6 + strategy.marking)
               - (passTendency * strategy.marking * (bThreat - aThreat) * 0.45)
               - (shotTendency * strategy.marking * (bLane - aLane) * 0.25);
@@ -1702,9 +1739,7 @@ function App() {
             }
           }
         } else if (presser) {
-          const pressureDistance = nutmegTendency > 0.16 && strategy.marking > 0.55
-            ? 2
-            : strategy.pressing > 0.65 ? 1 : 2;
+          const pressureDistance = distance(presser, carrier) <= 3 || strategy.pressing > 0.65 ? 1 : 2;
           const pressureTargets = Array.from({ length: 11 }, (_, y) =>
             Array.from({ length: 22 }, (_, x) => ({ x, y })),
           ).flat().filter((point) => Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y)) === pressureDistance);
@@ -1732,7 +1767,7 @@ function App() {
           ai.message = "The opposition holds shape. Your turn.";
         }
       } else {
-        const nearestAway = ai.tokens.filter((token) => token.side === "away")
+        const nearestAway = ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK")
           .sort((a, b) => distance(a, ai.ball) - distance(b, ai.ball))[0];
         const nearestHome = ai.tokens.filter((token) => token.side === "home")
           .sort((a, b) => distance(a, ai.ball) - distance(b, ai.ball))[0];
@@ -2043,7 +2078,7 @@ function App() {
       setMatch({ ...match, message: "Your action is used. Complete your drive or end the turn." });
       return;
     }
-    const passRange = 2 + movementBonus(player.player) + 2 + passingBonus(player.player);
+    const passRange = passingRange(player.player);
     const receivers = match.tokens.filter((token) =>
       token.side === player.side
       && token.player.id !== player.player.id
@@ -2069,7 +2104,7 @@ function App() {
       setMatch({ ...match, message: "That pass is no longer available. Select the ball carrier and try again." });
       return;
     }
-    const passRange = 2 + movementBonus(player.player) + 2 + passingBonus(player.player);
+    const passRange = passingRange(player.player);
     if (distance(player, receiver) > passRange) {
       setPassMode(false);
       setMatch({ ...match, message: `That teammate is outside passing range (${passRange} tiles).` });
@@ -2241,14 +2276,14 @@ function App() {
   const ownTurn = match.turn === activeSide && !match.finished && !match.halftime
     && (quickplayMode !== "online" || onlineReady);
   const movementRange = selectedPlayer ? 2 + movementBonus(selectedPlayer.player) : 0;
-  const passingRange = movementRange + 2 + (selectedPlayer ? passingBonus(selectedPlayer.player) : 0);
+  const passReach = selectedPlayer ? passingRange(selectedPlayer.player) : 5;
   const eligiblePassIds = new Set(
     selectedPlayer && ownTurn && selectedPlayer.side === activeSide
       && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y
       && match.actionsUsed < 1 + match.bonusActions
       ? match.tokens.filter((token) => token.side === selectedPlayer.side
         && token.player.id !== selectedPlayer.player.id
-        && distance(selectedPlayer, token) <= passingRange).map((token) => token.player.id)
+        && distance(selectedPlayer, token) <= passReach).map((token) => token.player.id)
       : [],
   );
   const occupiedKeys = new Set(match.tokens.map((token) => `${token.x},${token.y}`));
@@ -2271,7 +2306,7 @@ function App() {
   const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= shotRange(selectedPlayer.player);
   const canShowGoalkeeperClear = selectedPlayer?.side === activeSide
     && selectedPlayer.player.position === "GK" && isInOwnPenaltyBox(selectedPlayer, match.half);
-  const clearTarget = canShowGoalkeeperClear ? goalkeeperClearTarget(selectedPlayer, match.half) : null;
+  const clearTarget = canShowGoalkeeperClear ? goalkeeperClearTarget(selectedPlayer, match.tokens, match.half) : null;
   const clearDistance = clearTarget && selectedPlayer ? distance(selectedPlayer, clearTarget) : 0;
   const clearAccuracy = selectedPlayer ? goalkeeperClearAccuracy(selectedPlayer.player, clearDistance) : 0;
   const canClear = canShowGoalkeeperClear && canAct
@@ -2813,7 +2848,7 @@ function App() {
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
             <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
             {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${clearAccuracy}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
-            <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passingRange} tiles`}</span></button>
+            <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passReach} tiles`}</span></button>
             <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
             <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplayMode === "online" ? "Turn passed to your online opponent." : quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplayMode === "online" ? "send turn online" : quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>

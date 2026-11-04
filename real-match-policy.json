@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "source": "StatsBomb Open Data",
+  "sourceUrl": "https://github.com/hudl/open-data",
+  "termsUrl": "https://github.com/hudl/open-data#terms--conditions",
+  "dataRevision": "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb",
+  "competitions": 80,
+  "listedMatches": 3961,
+  "matchesWithEvents": 3961,
+  "unavailableMatches": 0,
+  "actions": [
+    "pass",
+    "carry",
+    "shot"
+  ],
+  "features": [
+    "bias",
+    "attackProgress",
+    "centrality",
+    "underPressure",
+    "scoreDifference",
+    "matchProgress"
+  ],
+  "trainingExamples": {
+    "pass": 3061487,
+    "carry": 2398804,
+    "shot": 80565
+  },
+  "validationExamples": {
+    "pass": 775063,
+    "carry": 609149,
+    "shot": 20662
+  },
+  "validationSampleSize": 50000,
+  "validationAccuracy": 0.61476,
+  "validationConfusionMatrix": [
+    [
+      23217,
+      4289,
+      0
+    ],
+    [
+      14242,
+      7521,
+      0
+    ],
+    [
+      567,
+      164,
+      0
+    ]
+  ],
+  "weights": [
+    [
+      2.596087890452176,
+      0.025584745751862262,
+      -1.6772252437349555,
+      -0.7033500085596162,
+      -0.058330904330237396,
+      -0.1754662924981977
+    ],
+    [
+      2.0628566594533044,
+      -0.008845095504246206,
+      -1.5263084307275492,
+      0.37072426522810165,
+      0.03825168433070574,
+      -0.22468945630787676
+    ],
+    [
+      -4.658944549905507,
+      -0.016739650247615527,
+      3.203533674462322,
+      0.33262574333158,
+      0.02007921999953139,
+      0.40015574880605514
+    ]
+  ]
+}

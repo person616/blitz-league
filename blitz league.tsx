@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
+import realMatchPolicy from "./real-match-policy.json";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
@@ -760,6 +761,37 @@ const closestPlayerId = (tokens: Token[], ball: { x: number; y: number }, side: 
 const ownGoalDistance = (player: Token, half: 1 | 2 = 1) => {
   const goalX = player.side === "home" ? (half === 1 ? 21 : 0) : (half === 1 ? 0 : 21);
   return Math.abs(goalX - player.x);
+};
+const realMatchActionProbabilities = (
+  player: Token,
+  tokens: Token[],
+  match: Match,
+  goalDistance: number,
+) => {
+  const ownScore = match.score[player.side === "home" ? 0 : 1];
+  const opponentScore = match.score[player.side === "home" ? 1 : 0];
+  const underPressure = tokens.some((token) =>
+    token.side !== player.side && distance(token, player) <= 2,
+  );
+  const features = [
+    1,
+    cap(1 - goalDistance / 21, 0, 1),
+    cap(1 - Math.abs(player.y - 5) / 5, 0, 1),
+    underPressure ? 1 : 0,
+    cap((ownScore - opponentScore) / 3, -1, 1),
+    cap(match.minute / 90, 0, 1),
+  ];
+  const logits = realMatchPolicy.weights.map((row) =>
+    row.reduce((sum, weight, index) => sum + weight * features[index], 0),
+  );
+  const maxLogit = Math.max(...logits);
+  const exponentials = logits.map((value) => Math.exp(value - maxLogit));
+  const total = exponentials.reduce((sum, value) => sum + value, 0);
+  return {
+    pass: exponentials[0] / total,
+    carry: exponentials[1] / total,
+    shot: exponentials[2] / total,
+  };
 };
 const campaignStageCount = 105;
 const campaignStageNames = [
@@ -1612,6 +1644,7 @@ function App() {
     } else if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
       const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
+      const learnedActions = realMatchActionProbabilities(owner, ai.tokens, ai, goalDistance);
       const receiver = ai.tokens.filter((token) => token.side === "away" && token.player.id !== owner.player.id
         && distance(owner, token) <= passingRange(owner.player)
         && ownGoalDistance(token, latest.half) < goalDistance)
@@ -1620,16 +1653,23 @@ function App() {
       const passInterceptor = receiver
         ? findInterceptor(ai.tokens, "away", lineCells(owner, receiver).slice(0, -1))
         : undefined;
+      const learnedPassShare = learnedActions.pass / Math.max(0.001, learnedActions.pass + learnedActions.carry);
+      const learnedShotThreshold = cap(
+        24 + (1 - strategy.finishing) * 28 - (learnedActions.shot - 0.1) * 35,
+        18,
+        62,
+      );
       const choosePass = !!receiver && !passInterceptor
         && (goalDistance > shotRange(owner.player) || chance < 48)
-        && Math.random() < strategy.passing * (0.25 + passTendency * 0.6);
+        && Math.random() < strategy.passing * (0.25 + passTendency * 0.6)
+          * (0.75 + learnedPassShare * 0.5);
       if (choosePass && receiver) {
         ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
         const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
         if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
         ai.message = `The opposition finds ${receiver.player.name} in space with a weighted pass.`;
       } else if (goalDistance <= shotRange(owner.player)
-        && (goalDistance <= 2 || chance >= 24 + (1 - strategy.finishing) * 28)) {
+        && (goalDistance <= 2 || chance >= learnedShotThreshold)) {
         const goal = { x: latest.half === 1 ? 0 : 21, y: 5 };
         const interception = findInterceptor(ai.tokens, "away", lineCells(owner, goal));
         if (interception && Math.random() * 100 < interceptionChance(interception.token, "shot", interception.gap)) {
@@ -2732,7 +2772,11 @@ function App() {
           <input aria-label="CPU AI difficulty" type="range" min="1" max="100" step="1" value={aiDifficulty}
             onChange={(event) => setAiDifficulty(Number(event.target.value))} />
           <div className="ai-difficulty-scale"><span>1 · WEAKEST STRATEGY</span><span>100 · TOP STRATEGY</span></div>
-          <p className="ai-difficulty-note">Strategy search benchmarked {AI_POLICY_SEARCH_SIZE.toLocaleString()} tactical policies across attack, defense, counters, and opponent styles. The AI also learns your local tendencies—shots, passes, carries, and nutmegs—on this device ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed).</p>
+          <p className="ai-difficulty-note">The CPU combines tactical defense and local opponent adaptation with a pass/carry/shot model trained on {realMatchPolicy.matchesWithEvents.toLocaleString()} real match event files. Higher levels field stronger players and use the trained action preferences more consistently. The model is trained and validated from separate matches; its defensive positioning remains rule-based.</p>
+          <p className="small-note" style={{ lineHeight: 1.7, margin: "10px 0 0" }}>
+            Data credit: <a href="https://github.com/hudl/open-data" target="_blank" rel="noreferrer">StatsBomb Open Data</a>.
+            The CPU also adapts to your local tendencies—shots, passes, carries, and nutmegs ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed).
+          </p>
         </section>
         <div className="quickplay-options">
           <button className="quickplay-option" onClick={startCpuQuickplay}>

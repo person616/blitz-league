@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: person616-blitz-league-match-relay
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run server
+    healthCheckPath: /health
+    autoDeploy: true

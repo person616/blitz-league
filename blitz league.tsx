@@ -915,10 +915,6 @@ function App() {
   const [saveReady, setSaveReady] = useState(false);
   const [quickplaySide, setQuickplaySide] = useState<"home" | "away" | null>(null);
   const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | null>(null);
-  const [serverAddress, setServerAddress] = useState(() => {
-    try { return window.localStorage.getItem("blitz-league-server-address") ?? ""; }
-    catch { return ""; }
-  });
   const [joinRoomCode, setJoinRoomCode] = useState("");
   const [onlineRoomCode, setOnlineRoomCode] = useState("");
   const [onlineStatus, setOnlineStatus] = useState("");
@@ -1317,26 +1313,13 @@ function App() {
   }
 
   function connectOnline(action: "create-room" | "join-room") {
-    let address: URL;
-    try {
-      address = new URL(serverAddress.trim());
-    } catch {
-      setOnlineStatus("Enter the secure server address from the host.");
-      return;
-    }
-    if (address.protocol !== "wss:" || (window.location.protocol === "https:" && address.protocol !== "wss:")) {
-      setOnlineStatus("Use a secure wss:// address. For hosting help, see the instructions below.");
-      return;
-    }
     if (onlineSocket.current) onlineSocket.current.close();
-    const socket = new WebSocket(address.toString().replace(/\/$/, ""));
+    const socket = new WebSocket("wss://person616-blitz-league-match-relay.onrender.com");
     onlineSocket.current = socket;
     setOnlineStatus("Connecting to the host...");
     setOnlineRoomCode("");
     setOnlineReady(false);
     socket.onopen = () => {
-      try { window.localStorage.setItem("blitz-league-server-address", address.toString().replace(/\/$/, "")); }
-      catch { /* The address remains available for this session. */ }
       if (action === "create-room") {
         const initial = makeMatch(awayPlayers, level, activeFormat, homePlayers, activeFormation,
           formationAssignments[activeFormationId] ?? {});
@@ -1408,7 +1391,7 @@ function App() {
         if (packet.match.finished) setScreen("victory");
       }
     };
-    socket.onerror = () => setOnlineStatus("Could not reach the server. Check the address and make sure the host is online.");
+    socket.onerror = () => setOnlineStatus("Online server unavailable. Complete the one-time Render setup below, then try again.");
     socket.onclose = () => {
       if (onlineSocket.current === socket) {
         onlineSocket.current = null;
@@ -2294,7 +2277,7 @@ function App() {
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
         .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}
-        .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-host-help{display:grid;gap:8px;margin-top:18px;color:#929d93;font-size:10px;line-height:1.7}.online-host-help strong{color:#dce7dc;font-size:11px}.online-host-help code{background:#ffffff0b;border:1px solid #ffffff12;border-radius:4px;padding:2px 5px;color:#d7f583;font-family:'DM Mono',monospace}
+        .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#b8f36b;font-size:10px}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
         .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#929d93;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#b8f36b18;border-color:#b8f36b75;color:#b8f36b}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0d1110}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}
@@ -2648,29 +2631,22 @@ function App() {
           <button className={`quickplay-option ${showOnlineSetup ? "selected" : ""}`} onClick={() => setShowOnlineSetup((shown) => !shown)}>
             <span className="quickplay-icon">🌐</span>
             <strong>Online · 11v11</strong>
-            <p>Host a room from your computer or join another player's room using a six-character code.</p>
+            <p>Create a game and share its seven-digit code. Your opponent joins with just that code.</p>
             <span className="badge">CREATE OR JOIN ROOM</span>
           </button>
         </div>
         {showOnlineSetup && <section className="settings-card online-setup">
-          <div className="panel-heading"><h2>Computer-hosted 1v1</h2><span>Your server · your room</span></div>
-          <p className="small-note" style={{ lineHeight: 1.7 }}>Enter the host's secure WebSocket address. The host starts the game server on their computer and keeps it running for the whole match. Both players need internet access.</p>
-          <label className="small-note" htmlFor="online-server-address">SECURE SERVER ADDRESS (WSS)</label>
-          <input className="role-player-select" id="online-server-address" type="url" placeholder="wss://your-tunnel.trycloudflare.com"
-            value={serverAddress} onChange={(event) => setServerAddress(event.target.value)} />
+          <div className="panel-heading"><h2>Online 1v1</h2><span>Quick join · 7-digit code</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7 }}>Create a game to get a room code, then share it with your opponent. To join, enter the code—no server address needed.</p>
           <div className="online-room-actions">
-            <button className="primary" onClick={() => connectOnline("create-room")}>HOST A ROOM</button>
-            <input className="role-player-select" aria-label="Room code" placeholder="ROOM CODE"
-              maxLength={6} value={joinRoomCode} onChange={(event) => setJoinRoomCode(event.target.value.toUpperCase())} />
-            <button className="secondary" disabled={joinRoomCode.trim().length !== 6} onClick={() => connectOnline("join-room")}>JOIN ROOM</button>
+            <button className="primary" onClick={() => connectOnline("create-room")}>CREATE GAME</button>
+            <input className="role-player-select" aria-label="7-digit game code" placeholder="7-DIGIT CODE"
+              inputMode="numeric" pattern="[0-9]*" maxLength={7} value={joinRoomCode}
+              onChange={(event) => setJoinRoomCode(event.target.value.replace(/\D/g, "").slice(0, 7))} />
+            <button className="secondary" disabled={joinRoomCode.length !== 7} onClick={() => connectOnline("join-room")}>JOIN GAME</button>
           </div>
-          {onlineStatus && <div className="store-notice" role="status">{onlineStatus}{onlineRoomCode && <> · ROOM <strong style={{ color: "#b8f36b", letterSpacing: ".12em" }}>{onlineRoomCode}</strong></>}</div>}
-          <div className="online-host-help">
-            <strong>Start your computer's server</strong>
-            <span>In the game project folder, run <code>npm.cmd run server</code> in PowerShell, then in another terminal run <code>cloudflared tunnel --url http://localhost:8787</code>.</span>
-            <span>Install Cloudflare Tunnel (cloudflared) first. Copy its HTTPS trycloudflare.com address, change <code>https://</code> to <code>wss://</code>, paste it above, and host a room. Keep both terminals open.</span>
-            <span>Share the WSS address and six-character room code with your opponent. Quick tunnels use a temporary address; create a new room if it changes.</span>
-          </div>
+          {onlineStatus && <div className="store-notice" role="status">{onlineStatus}{onlineRoomCode && <> · GAME CODE <strong style={{ color: "#b8f36b", letterSpacing: ".18em", fontSize: "16px" }}>{onlineRoomCode}</strong></>}</div>}
+          <a className="online-setup-link" href="https://render.com/deploy?repo=https://github.com/person616/blitz-league" target="_blank" rel="noreferrer">First-time setup: deploy the match server on Render</a>
         </section>}
       </div>}
 

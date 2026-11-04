@@ -16,17 +16,11 @@ The Locker Room player roster can be sorted by name, position, club, OVR, base r
 
 The current save version performs a one-time season reset for returning browsers: older saves start with the regular starting XI, base progression, and default club kits; subsequent progress is saved normally. Since saves are stored locally in each browser, the reset takes effect the next time a returning player visits the site.
 
-## Host online 1v1 from your computer
+## Online 1v1
 
-The GitHub Pages site is the game client; it does not host game sessions. To host an online match, run this repository's WebSocket relay on your computer and expose it over a secure Cloudflare Tunnel:
+The GitHub Pages site connects to a WebSocket room relay deployed on Render. Deploy the included `render.yaml` blueprint from this repository at [Render](https://render.com/deploy?repo=https://github.com/person616/blitz-league); it creates the `person616-blitz-league-match-relay` service. Once deployed, choose Quickplay → Online · 11v11, select Create Game, and share the seven-digit code. The other player enters that code and selects Join Game; they do not need a server address.
 
-1. Install Node.js and [Cloudflare Tunnel (`cloudflared`)](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/), then run `npm install` in the project folder (in Windows PowerShell, use `npm.cmd install`).
-2. In one terminal, run `npm run server` (in Windows PowerShell, use `npm.cmd run server`). Keep it open; the server listens on port 8787.
-3. In a second terminal, run `cloudflared tunnel --url http://localhost:8787`. Keep it open. Cloudflare prints a temporary `https://....trycloudflare.com` address.
-4. Open Quickplay → Online · 11v11 on the public site. Change the tunnel address from `https://` to `wss://`, enter it in Secure Server Address, then choose Host a Room.
-5. Send the WSS address and the displayed six-character room code to the other player. They enter both on the same Online screen and choose Join Room.
-
-The tunnel provides encrypted browser-to-server WebSockets without router port forwarding. Your computer and both terminal processes must stay online during the match. The temporary tunnel address changes when restarted. Room codes are private invitations, not account authentication; this lightweight relay is intended for casual play and does not provide ranked-match anti-cheat or persistent sessions.
+The free Render service may take a short time to wake when idle. Rooms are temporary and close if the creating player disconnects or the service restarts. Room codes are invitations, not account authentication; the relay is intended for casual matches and does not provide ranked-match anti-cheat or persistent sessions.
 
 For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode is gated by Vite's development flag, skips saved progress, and is unavailable in production builds and on the public website.
 

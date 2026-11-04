@@ -9,8 +9,6 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
 ]);
 const rooms = new Map();
-const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
 const send = (socket, message) => {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 };
@@ -24,7 +22,7 @@ const broadcast = (room, message, except) => {
 const createRoomCode = () => {
   let code;
   do {
-    code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join("");
+    code = String(randomInt(1, 10_000_000)).padStart(7, "0");
   } while (rooms.has(code));
   return code;
 };
@@ -88,9 +86,9 @@ webSocketServer.on("connection", (socket) => {
     }
 
     if (message.type === "join-room") {
-      const code = String(message.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const code = String(message.code ?? "").replace(/\D/g, "");
       const room = rooms.get(code);
-      if (roomCode || !room) {
+      if (roomCode || code.length !== 7 || !room) {
         send(socket, { type: "error", message: "Room not found. Check the code and try again." });
         return;
       }

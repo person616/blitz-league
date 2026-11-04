@@ -28,6 +28,8 @@ The CPU combines hand-authored defensive positioning, local play-style adaptatio
 
 The model artifact contains only learned weights and aggregate training/validation counts, not raw match files. To reproduce it, run `npm run train:real-match-policy`; this downloads the event files from the pinned [StatsBomb Open Data](https://github.com/hudl/open-data) revision and writes `real-match-policy.json`. The source asks users to credit StatsBomb and use its logo when publishing analysis or insights based on the data; the game links the dataset and displays the official StatsBomb icon in the CPU difficulty panel.
 
+Street 3v3 places the goalkeeper, midfielder, and forward in separate mirrored positions, with the midfielder taking kickoff. Fullscreen shows the complete pitch and scales player tokens and the ball relative to the pitch size.
+
 For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode is gated by Vite's development flag, skips saved progress, and is unavailable in production builds and on the public website.
 
 ## Run locally

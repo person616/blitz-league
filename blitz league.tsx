@@ -6,10 +6,13 @@ import type { CSSProperties } from "react";
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
 type FormatId = "classic" | "small-sided" | "golden-goal";
+type FormationId = "4-3-3" | "4-4-2" | "3-5-2" | "4-2-3-1";
 type CaptionSize = "small" | "medium" | "large";
 type KitColor = { id: string; name: string; value: string };
 type CrateReveal = { crate: "basic" | "blitz" | "thanksgiving"; color: KitColor; reward: string; bonusCoins: number };
 type PlayerSort = "default" | "name-asc" | "name-desc" | "position" | "club" | "ovr-desc" | "ovr-asc" | "rating-desc" | "rating-asc" | "ability-desc" | "ability-asc" | "mean-desc" | "unlock-asc" | "unlock-desc" | "unlocked-first" | "locked-first";
+type FormationSlot = { id: string; label: string; position: Position; x: number; y: number };
+type TacticalFormation = { id: FormationId; name: string; description: string; slots: FormationSlot[] };
 type Player = {
   id: string;
   name: string;
@@ -20,9 +23,14 @@ type Player = {
   abilityType: AbilityType;
   abilityStat: number;
   color: string;
+  tacticalSlot?: string;
+  tacticalX?: number;
+  tacticalY?: number;
 };
 type Token = { player: Player; x: number; y: number; side: "home" | "away" };
 export type Match = {
+  format: FormatId;
+  formationId: FormationId;
   tokens: Token[];
   ball: { x: number; y: number };
   turn: "home" | "away";
@@ -216,6 +224,30 @@ const formats: { id: FormatId; name: string; detail: string; unlock: number }[] 
   { id: "small-sided", name: "Street 3v3", detail: "Fast, open play · first to 2 goals", unlock: smallSidedLevel },
   { id: "golden-goal", name: "Golden Goal", detail: "One goal wins · sudden death", unlock: goldenGoalLevel },
 ];
+const makeFormationSlots = (
+  defenders: [string, number][],
+  midfielders: [string, number][],
+  forwards: [string, number][],
+  defenderX = 4,
+  midfieldX = 7,
+  forwardX = 10,
+): FormationSlot[] => [
+  { id: "GK", label: "GK", position: "GK", x: 1, y: 5 },
+  ...defenders.map(([id, y]) => ({ id, label: id, position: "DEF" as const, x: defenderX, y })),
+  ...midfielders.map(([id, y]) => ({ id, label: id, position: "MID" as const, x: midfieldX, y })),
+  ...forwards.map(([id, y]) => ({ id, label: id, position: "FWD" as const, x: forwardX, y })),
+];
+const formations: TacticalFormation[] = [
+  { id: "4-3-3", name: "4-3-3", description: "Balanced wide attack · 4 defenders, 3 midfielders, 3 forwards", slots: makeFormationSlots([["LB", 1], ["LCB", 4], ["RCB", 6], ["RB", 9]], [["CDM", 3], ["LCM", 5], ["RCM", 7]], [["LW", 2], ["ST", 5], ["RW", 8]]) },
+  { id: "4-4-2", name: "4-4-2", description: "Two banks of four · 4 defenders, 4 midfielders, 2 strikers", slots: makeFormationSlots([["LB", 1], ["LCB", 4], ["RCB", 6], ["RB", 9]], [["LM", 1], ["LCM", 4], ["RCM", 6], ["RM", 9]], [["LS", 4], ["RS", 6]]) },
+  { id: "3-5-2", name: "3-5-2", description: "Wing-back width · 3 defenders, 5 midfielders, 2 strikers", slots: makeFormationSlots([["LCB", 2], ["CB", 5], ["RCB", 8]], [["LWB", 0], ["LCM", 3], ["CDM", 5], ["RCM", 7], ["RWB", 10]], [["LS", 4], ["RS", 6]]) },
+  { id: "4-2-3-1", name: "4-2-3-1", description: "Compact double pivot · 4 defenders, 2 holding mids, 3 creators, 1 striker", slots: makeFormationSlots([["LB", 1], ["LCB", 4], ["RCB", 6], ["RB", 9]], [["LDM", 4], ["RDM", 6], ["CAM", 5]], [["LW", 1], ["RW", 9], ["ST", 5]], 4, 7, 11) },
+];
+const defaultFormation = formations[0];
+const formationById = (id: string) => formations.find((formation) => formation.id === id) ?? defaultFormation;
+const campaignFormatForStage = (stage: number): FormatId =>
+  stage % 7 === 0 ? "golden-goal" : stage % 5 === 0 ? "small-sided" : "classic";
+const campaignFormatLabel = (stage: number) => formats.find((format) => format.id === campaignFormatForStage(stage))?.name ?? formats[0].name;
 const kitColors: KitColor[] = [
   { id: "lime", name: "League Lime", value: "#b8f36b" },
   { id: "coral", name: "Kickoff Coral", value: "#ec695e" },
@@ -258,10 +290,10 @@ const cratePlayerPools: Record<"basic" | "blitz" | "thanksgiving", string[]> = {
   blitz: ["suarez", "burki", "cucho", "messi", "bouanga", "puig", "mukhtar", "vela", "acosta", "dreyer", "morris"],
   thanksgiving: ["mls-guzan", "mls-driussi", "mls-lloris", "mls-giroud", "mls-reus", "mls-miranchuk", "mls-forsberg", "mls-blake", "mls-gil", "mls-gauld", "mls-espinoza"],
 };
-const crateFormatPools: Record<"basic" | "blitz" | "thanksgiving", FormatId[]> = {
-  basic: ["small-sided"],
-  blitz: ["golden-goal", "small-sided"],
-  thanksgiving: ["small-sided", "golden-goal"],
+const crateFormationPools: Record<"basic" | "blitz" | "thanksgiving", FormationId[]> = {
+  basic: ["4-4-2"],
+  blitz: ["3-5-2", "4-2-3-1"],
+  thanksgiving: ["4-2-3-1", "3-5-2"],
 };
 const kitColorById = (id: string) => kitColors.find((color) => color.id === id) ?? kitColors[0];
 const kitColorsTooSimilar = (first: string, second: string) => {
@@ -294,6 +326,34 @@ const selectXI = (players: Player[]) => {
       .slice(0, slots[position]),
   );
   return selected.sort((a, b) => positionOrder[a.position] - positionOrder[b.position] || overallRating(b) - overallRating(a));
+};
+const assignFormationPlayers = (
+  players: Player[],
+  formation: TacticalFormation,
+  assignments: Record<string, string> = {},
+) => {
+  const used = new Set<string>();
+  const reserved = new Map(formation.slots.flatMap((slot) => {
+    const assigned = players.find((player) => player.id === assignments[slot.id] && player.position === slot.position);
+    return assigned ? [[slot.id, assigned.id] as const] : [];
+  }));
+  return formation.slots.flatMap((slot) => {
+    const assigned = players.find((player) => player.id === reserved.get(slot.id)
+      && player.position === slot.position && !used.has(player.id));
+    const player = assigned ?? players
+      .filter((candidate) => candidate.position === slot.position && !used.has(candidate.id)
+        && ![...reserved.entries()].some(([assignedSlot, playerId]) => assignedSlot !== slot.id && playerId === candidate.id))
+      .sort((a, b) => overallRating(b) - overallRating(a))[0];
+    if (!player) return [];
+    used.add(player.id);
+    return [{
+      ...player,
+      position: slot.position,
+      tacticalSlot: slot.id,
+      tacticalX: slot.x,
+      tacticalY: slot.y,
+    }];
+  });
 };
 const selectSmallSidedXI = (players: Player[]) => {
   const selected = (["GK", "MID", "FWD"] as Position[])
@@ -472,8 +532,14 @@ const resetKickoff = (tokens: Token[], side: "home" | "away", half: 1 | 2, small
     ? [[11, 5], [14, 3], [14, 7]]
     : [[20, 5], [17, 1], [17, 4], [17, 6], [17, 9], [14, 2], [14, 5], [14, 8], [11, 2], [11, 5], [11, 8]];
   const reset = (team: "home" | "away") => tokens.filter((token) => token.side === team).map((token, index) => {
-    const [baseX, y] = (team === "home" ? homeStarts : awayStarts)[index] ?? [team === "home" ? 7 : 14, 5];
-    const x = half === 2 ? 21 - baseX : baseX;
+    const [baseX, y] = smallSided
+      ? (team === "home" ? homeStarts : awayStarts)[index] ?? [team === "home" ? 7 : 14, 5]
+      : [
+        token.player.tacticalX ?? (team === "home" ? homeStarts[index]?.[0] ?? 7 : 21 - (awayStarts[index]?.[0] ?? 14)),
+        token.player.tacticalY ?? (team === "home" ? homeStarts[index]?.[1] ?? 5 : awayStarts[index]?.[1] ?? 5),
+      ];
+    const orientedX = team === "home" ? baseX : 21 - baseX;
+    const x = half === 2 ? 21 - orientedX : orientedX;
     return { ...token, x, y };
   });
   let home = reset("home");
@@ -609,13 +675,15 @@ function makeMatch(
   level: number,
   format: FormatId,
   homeRoster: Player[] = roster.filter((player) => startingPlayers.includes(player.id)),
+  formation: TacticalFormation = defaultFormation,
+  assignments: Record<string, string> = {},
 ): Match {
-  const home = selectXI(homeRoster);
-  const homeXI = format === "small-sided" ? selectSmallSidedXI(homeRoster) : home;
-  const opponentsXI = selectXI(away.length ? away : roster);
+  const homeFormationXI = assignFormationPlayers(homeRoster, formation, assignments);
+  const homeXI = format === "small-sided" ? selectSmallSidedXI(homeFormationXI) : homeFormationXI;
+  const awayFormationXI = assignFormationPlayers(away.length ? away : roster, defaultFormation);
   const opponents = format === "small-sided"
-    ? selectSmallSidedXI(away.length ? away : roster)
-    : opponentsXI;
+    ? selectSmallSidedXI(awayFormationXI)
+    : awayFormationXI;
   const homeStarts: [number, number][] = format === "small-sided"
     ? [[2, 5], [6, 3], [6, 7]]
     : [[1, 5], [4, 1], [4, 4], [4, 6], [4, 9], [7, 2], [7, 5], [7, 8], [10, 2], [10, 5], [10, 8]];
@@ -623,11 +691,13 @@ function makeMatch(
     ? [[19, 5], [15, 3], [15, 7]]
     : [[20, 5], [17, 1], [17, 4], [17, 6], [17, 9], [14, 2], [14, 5], [14, 8], [11, 2], [11, 5], [11, 8]];
   const tokens: Token[] = [
-    ...homeXI.map((player, i) => ({ player, x: homeStarts[i][0], y: homeStarts[i][1], side: "home" as const })),
-    ...opponents.map((player, i) => ({ player: { ...player, id: `ai-${player.id}` }, x: awayStarts[i][0], y: awayStarts[i][1], side: "away" as const })),
+    ...homeXI.map((player, i) => ({ player, x: format === "small-sided" ? homeStarts[i][0] : player.tacticalX ?? homeStarts[i][0], y: format === "small-sided" ? homeStarts[i][1] : player.tacticalY ?? homeStarts[i][1], side: "home" as const })),
+    ...opponents.map((player, i) => ({ player: { ...player, id: `ai-${player.id}` }, x: format === "small-sided" ? awayStarts[i][0] : awayStarts[i][0], y: awayStarts[i][1], side: "away" as const })),
   ];
   const kickoff = resetKickoff(tokens, "home", 1, format === "small-sided");
   return {
+    format,
+    formationId: formation.id,
     tokens: kickoff.tokens,
     ball: kickoff.ball,
     turn: "home",
@@ -655,6 +725,11 @@ function App() {
     devToolsEnabled ? roster.map((player) => player.id) : startingPlayers);
   const [unlockedFormats, setUnlockedFormats] = useState<FormatId[]>(() =>
     devToolsEnabled ? formats.map((format) => format.id) : ["classic"]);
+  const [unlockedFormations, setUnlockedFormations] = useState<FormationId[]>(() =>
+    devToolsEnabled ? formations.map((formation) => formation.id) : [defaultFormation.id]);
+  const [activeFormationId, setActiveFormationId] = useState<FormationId>(defaultFormation.id);
+  const [formationAssignments, setFormationAssignments] = useState<Partial<Record<FormationId, Record<string, string>>>>({});
+  const [selectedFormationSlotId, setSelectedFormationSlotId] = useState("ST");
   const [unlockedTeamColors, setUnlockedTeamColors] = useState<string[]>(() =>
     devToolsEnabled ? kitColors.map((color) => color.id) : ["lime", "coral"]);
   const [homeKitColorId, setHomeKitColorId] = useState("lime");
@@ -664,7 +739,6 @@ function App() {
   const [crateReveal, setCrateReveal] = useState<CrateReveal | null>(null);
   const [crateRevealed, setCrateRevealed] = useState(false);
   const [playerSort, setPlayerSort] = useState<PlayerSort>("default");
-  const [customPositions, setCustomPositions] = useState<Partial<Record<string, Position>>>({});
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
   const [level, setLevel] = useState(() => devToolsEnabled ? campaignStageCount : 1);
@@ -707,15 +781,16 @@ function App() {
   );
   const formatUnlocked = (format: (typeof formats)[number]) =>
     devToolsEnabled || battlePassLevel >= format.unlock || unlockedFormats.includes(format.id);
+  const activeFormation = formationById(activeFormationId);
   const passProgress = battlePassLevel >= battlePassFinalLevel
     ? 100
     : Math.min(100, (xpTowardNextLevel / xpForNextLevel) * 100);
 
   const homePlayers = useMemo(() => roster
-    .filter((player) => devToolsEnabled || unlockedPlayers.includes(player.id))
-    .map((player) => customPositions[player.id] && customPositions[player.id] !== player.position
-      ? { ...player, position: customPositions[player.id]! }
-      : player), [unlockedPlayers, customPositions, devToolsEnabled]);
+    .filter((player) => devToolsEnabled || unlockedPlayers.includes(player.id)), [unlockedPlayers, devToolsEnabled]);
+  const formationXI = useMemo(() =>
+    assignFormationPlayers(homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {}),
+  [homePlayers, activeFormation, formationAssignments, activeFormationId]);
   const sortedRoster = useMemo(() => {
     const positionOrder: Record<Position, number> = { GK: 0, DEF: 1, MID: 2, FWD: 3 };
     const compareText = (a: string, b: string) => a.localeCompare(b);
@@ -723,8 +798,8 @@ function App() {
       if (playerSort === "default") return roster.indexOf(a) - roster.indexOf(b);
       const unlockedA = devToolsEnabled || unlockedPlayers.includes(a.id);
       const unlockedB = devToolsEnabled || unlockedPlayers.includes(b.id);
-      const positionA = customPositions[a.id] ?? a.position;
-      const positionB = customPositions[b.id] ?? b.position;
+      const positionA = a.position;
+      const positionB = b.position;
       const unlockA = playerUnlocks[a.id] ?? 0;
       const unlockB = playerUnlocks[b.id] ?? 0;
       let result = 0;
@@ -751,18 +826,32 @@ function App() {
         || overallRating(b) - overallRating(a)
         || compareText(a.name, b.name);
     });
-  }, [playerSort, customPositions, unlockedPlayers, devToolsEnabled]);
-  const startingXI = useMemo(() => selectXI(homePlayers), [homePlayers]);
+  }, [playerSort, unlockedPlayers, devToolsEnabled]);
+  const startingXI = formationXI;
+  const selectedFormationSlot = activeFormation.slots.find((slot) => slot.id === selectedFormationSlotId)
+    ?? activeFormation.slots[0];
+  const selectedFormationPlayer = formationXI.find((player) => player.tacticalSlot === selectedFormationSlot?.id);
   const awayPlayers = useMemo(() => {
     const aiTier = Math.floor((level - 1) / 1.5);
     return selectXI(roster.filter((player) =>
       startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= aiTier + 1,
     ))
   }, [level]);
-  const goalTarget = quickplayMode !== null ? 3 : activeFormat === "golden-goal" ? 1 : activeFormat === "small-sided" ? 2 : 3;
-  const matchIsSmallSided = quickplayMode === null && activeFormat === "small-sided";
+  const goalTarget = match.format === "golden-goal" ? 1 : match.format === "small-sided" ? 2 : 3;
+  const matchIsSmallSided = match.format === "small-sided";
   const scoreLabel = `${match.score[0]} — ${match.score[1]}`;
   const clockLabel = match.halftime ? "45' · HT" : `${match.minute}'`;
+
+  const setFormationSlotPlayer = (slotId: string, playerId: string) => {
+    setFormationAssignments((current) => {
+      const next = { ...(current[activeFormationId] ?? {}) };
+      Object.entries(next).forEach(([assignedSlot, assignedPlayer]) => {
+        if (assignedPlayer === playerId || assignedSlot === slotId) delete next[assignedSlot];
+      });
+      if (playerId !== "auto") next[slotId] = playerId;
+      return { ...current, [activeFormationId]: next };
+    });
+  };
 
   const buyDailyOffer = (player: Player) => {
     const offerKey = `${dailyOfferDateKey}:${player.id}`;
@@ -820,17 +909,17 @@ function App() {
     const playerPool = cratePlayerPools[crate]
       .map((id) => roster.find((player) => player.id === id))
       .filter((player): player is Player => !!player && (devToolsEnabled || !unlockedPlayers.includes(player.id)));
-    const formatPool = crateFormatPools[crate]
-      .map((id) => formats.find((format) => format.id === id))
-      .filter((format): format is (typeof formats)[number] =>
-        !!format && (devToolsEnabled || (!unlockedFormats.includes(format.id) && battlePassLevel < format.unlock)));
-    const bonusIsFormat = formatPool.length > 0
+    const formationPool = crateFormationPools[crate]
+      .map((id) => formations.find((formation) => formation.id === id))
+      .filter((formation): formation is TacticalFormation =>
+        !!formation && (devToolsEnabled || !unlockedFormations.includes(formation.id)));
+    const bonusIsFormation = formationPool.length > 0
       && (playerPool.length === 0 || Math.random() < (crate === "basic" ? 0.08 : 0.22));
-    const playerReward = !bonusIsFormat && playerPool.length
+    const playerReward = !bonusIsFormation && playerPool.length
       ? playerPool[Math.floor(Math.random() * playerPool.length)]
       : null;
-    const formatReward = bonusIsFormat
-      ? formatPool[Math.floor(Math.random() * formatPool.length)]
+    const formationReward = bonusIsFormation
+      ? formationPool[Math.floor(Math.random() * formationPool.length)]
       : null;
     const duplicateColor = !lockedColors.length;
     const bonusCoins = duplicateColor ? 25 : 0;
@@ -841,13 +930,13 @@ function App() {
     if (playerReward) {
       setUnlockedPlayers((current) => current.includes(playerReward.id) ? current : [...current, playerReward.id]);
     }
-    if (formatReward) {
-      setUnlockedFormats((current) => current.includes(formatReward.id) ? current : [...current, formatReward.id]);
+    if (formationReward) {
+      setUnlockedFormations((current) => current.includes(formationReward.id) ? current : [...current, formationReward.id]);
     }
     const bonusLabel = playerReward
       ? `${playerReward.name} (${overallRating(playerReward)} OVR)`
-      : formatReward?.name ?? "75 bonus coins";
-    if (!playerReward && !formatReward && !devToolsEnabled) setCoins((current) => current + 75);
+      : formationReward ? `${formationReward.name} Formation` : "75 bonus coins";
+    if (!playerReward && !formationReward && !devToolsEnabled) setCoins((current) => current + 75);
     setCrateRevealed(false);
     setCrateReveal({
       crate,
@@ -866,7 +955,7 @@ function App() {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; customPositions?: Record<string, Position>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
         if (data.progressionVersion !== currentSaveVersion) {
           window.localStorage.removeItem("soccer-baseboard-save");
           setNotice("Blitz League has started a fresh season. Your regular starting squad is ready.");
@@ -887,6 +976,26 @@ function App() {
           ? data.unlockedFormats.filter((id): id is FormatId => formats.some((format) => format.id === id))
           : [];
         setUnlockedFormats([...new Set(["classic" as FormatId, ...savedFormats])]);
+        const savedFormations = Array.isArray(data.unlockedFormations)
+          ? data.unlockedFormations.filter((id): id is FormationId => formations.some((formation) => formation.id === id))
+          : [];
+        const ownedFormations = [...new Set([defaultFormation.id, ...savedFormations])];
+        setUnlockedFormations(ownedFormations);
+        if (typeof data.activeFormationId === "string" && ownedFormations.includes(data.activeFormationId as FormationId)) {
+          setActiveFormationId(data.activeFormationId as FormationId);
+        }
+        if (data.formationAssignments && typeof data.formationAssignments === "object") {
+          const validAssignments: Partial<Record<FormationId, Record<string, string>>> = {};
+          formations.forEach((formation) => {
+            const assignments = data.formationAssignments?.[formation.id];
+            if (!assignments || typeof assignments !== "object") return;
+            const validSlots = Object.fromEntries(Object.entries(assignments).filter(([slotId, playerId]) =>
+              formation.slots.some((slot) => slot.id === slotId)
+              && roster.some((player) => player.id === playerId)));
+            validAssignments[formation.id] = validSlots;
+          });
+          setFormationAssignments(validAssignments);
+        }
         const savedColors = Array.isArray(data.unlockedTeamColors)
           ? data.unlockedTeamColors.filter((id) => kitColors.some((color) => color.id === id))
           : [];
@@ -900,12 +1009,6 @@ function App() {
         }
         if (data.dailyOfferPurchases && typeof data.dailyOfferPurchases === "object") {
           setDailyOfferPurchases(data.dailyOfferPurchases);
-        }
-        if (data.customPositions && typeof data.customPositions === "object") {
-          const validPositions = Object.fromEntries(Object.entries(data.customPositions)
-            .filter(([id, position]) => roster.some((player) => player.id === id)
-              && ["FWD", "MID", "DEF", "GK"].includes(position))) as Partial<Record<string, Position>>;
-          setCustomPositions(validPositions);
         }
         if (typeof data.coins === "number") setCoins(data.coins);
         if (data.activeFormat && formats.some((f) => f.id === data.activeFormat
@@ -926,12 +1029,14 @@ function App() {
   useEffect(() => {
     if (!saveReady || devToolsEnabled) return;
     window.localStorage.setItem("blitz-league-save", JSON.stringify({
-      xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors,
-      homeKitColorId, awayKitColorId, dailyOfferPurchases, customPositions, activeFormat, level,
+      xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedFormations,
+      activeFormationId, formationAssignments, unlockedTeamColors, homeKitColorId, awayKitColorId,
+      dailyOfferPurchases, activeFormat, level,
       captionsEnabled, captionSize, endTurnKey,
     }));
   }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
-    dailyOfferPurchases, customPositions, activeFormat, level, captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
+    unlockedFormations, activeFormationId, formationAssignments, dailyOfferPurchases, activeFormat, level,
+    captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
 
   useEffect(() => {
     if (screen !== "store") return;
@@ -1008,8 +1113,7 @@ function App() {
 
   function startLocalQuickplay() {
     setPassMode(false);
-    const localXI = selectXI(homePlayers);
-    const initial = makeMatch(localXI, level, "classic", homePlayers);
+    const initial = makeMatch(homePlayers, level, activeFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {});
     initial.message = "Local Quickplay · Home kicks off. Both teams have the same lineup. Take turns on this screen and pass the device after each turn.";
     setQuickplaySide("home");
     setQuickplayMode("local");
@@ -1019,7 +1123,7 @@ function App() {
 
   function startCpuQuickplay() {
     setPassMode(false);
-    const initial = makeMatch(awayPlayers, level, "classic", homePlayers);
+    const initial = makeMatch(awayPlayers, level, activeFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {});
     initial.message = "CPU Quickplay · You control the home team. Select a player, then choose a highlighted tile to move.";
     setQuickplaySide(null);
     setQuickplayMode("cpu");
@@ -1035,7 +1139,8 @@ function App() {
     const stageOpponentXI = selectXI(roster.filter((player) =>
       startingPlayers.includes(player.id) || (playerUnlocks[player.id] ?? 1) <= stageAiTier,
     ));
-    setMatch(makeMatch(stageOpponentXI, nextLevel, activeFormat, homePlayers));
+    const stageFormat = campaignFormatForStage(nextLevel);
+    setMatch(makeMatch(stageOpponentXI, nextLevel, stageFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {}));
     setScreen("match");
   }
 
@@ -1723,7 +1828,7 @@ function App() {
         .content{max-width:1280px;margin:0 auto}.eyebrow{font:500 10px 'DM Mono',monospace;letter-spacing:.2em;color:#b8f36b;text-transform:uppercase}
         h1{font-size:clamp(32px,4vw,52px);letter-spacing:-.055em;line-height:1.02;margin:13px 0 12px}.subtitle{color:#929c93;font-size:14px;line-height:1.7;max-width:550px;margin:0}
         .hero{padding:58px 0 38px;display:flex;justify-content:space-between;align-items:end;gap:25px}.hero-cta{display:flex;gap:10px}
-        .primary{background:#b8f36b;color:#14200f;padding:13px 19px;border-radius:9px;font-weight:800;font-size:12px;box-shadow:0 6px 25px #b8f36b1c}.primary:hover{background:#c9ff83;transform:translateY(-1px)}
+        .primary{background:#b8f36b;color:#14200f;padding:13px 19px;border-radius:9px;font-weight:800;font-size:12px;box-shadow:0 6px 25px #b8f36b1c}.primary:hover{background:#c9ff83;transform:translateY(-1px)}.primary:disabled{opacity:.52;cursor:not-allowed;box-shadow:none}
         .secondary{background:#ffffff0b;border:1px solid #ffffff15;padding:12px 17px;border-radius:9px;font-size:12px;font-weight:700}.secondary:hover{background:#ffffff14}
         .home-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.panel{background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}
         .panel-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:19px}.panel-heading h2{font-size:14px;margin:0;letter-spacing:-.02em}.panel-heading span{font:10px 'DM Mono',monospace;color:#879188;text-transform:uppercase;letter-spacing:.1em}
@@ -1775,6 +1880,26 @@ function App() {
         @media(max-width:850px){.store-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media(max-width:520px){.store-grid{grid-template-columns:1fr}}
       `}</style>
+      <style>{`
+        .formation-panel{background:#141a17;border:1px solid #ffffff14;border-radius:14px;padding:22px;margin-top:24px}
+        .formation-toolbar,.locker-roster-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+        .formation-toolbar select,.locker-roster-toolbar select,.role-player-select{appearance:none;background:#1a241e;color:#e5eee4;border:1px solid #39483d;border-radius:8px;padding:10px 36px 10px 12px;font:600 11px Manrope,Arial,sans-serif;outline:none}
+        .formation-toolbar select:focus,.locker-roster-toolbar select:focus,.role-player-select:focus{border-color:#b8f36b;box-shadow:0 0 0 2px #b8f36b24}
+        .formation-toolbar select option,.locker-roster-toolbar select option,.role-player-select option{background:#141a17;color:#edf3e9}
+        .formation-field{position:relative;display:grid;grid-template-columns:repeat(22,minmax(0,1fr));grid-template-rows:repeat(11,minmax(26px,1fr));aspect-ratio:22/11;min-height:290px;margin:20px auto;background:repeating-linear-gradient(90deg,#244c35 0%,#244c35 10%,#28543a 10%,#28543a 20%);border:1px solid #bddabd66;border-radius:12px;overflow:hidden}
+        .formation-field:before{content:"";position:absolute;inset:0 auto 0 50%;border-left:1px solid #d7eed255;pointer-events:none}
+        .formation-field:after{content:"";position:absolute;left:50%;top:50%;width:14%;aspect-ratio:1;border:1px solid #d7eed255;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+        .formation-slot{z-index:1;align-self:center;justify-self:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:clamp(34px,5.6vw,65px);min-height:43px;padding:4px 2px;background:#111b17d9;border:1px solid #ffffff70;border-radius:9px;color:#eff8ed;cursor:pointer;box-shadow:0 2px 8px #0008}
+        .formation-slot:hover,.formation-slot.selected{border-color:#b8f36b;box-shadow:0 0 0 2px #b8f36b55,0 0 14px #b8f36b55}
+        .formation-slot .slot-position{font:700 8px 'DM Mono',monospace;color:#b8f36b}
+        .formation-slot .slot-player{font-size:8px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .role-assignment{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px;background:#ffffff06;border:1px solid #ffffff12;border-radius:10px}
+        .role-assignment small{display:block;color:#9da99e;font-size:10px;margin-top:4px}
+        .locker-roster-toolbar{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:12px 15px;margin-top:28px}
+        .locker-roster-toolbar label{font:10px 'DM Mono',monospace;letter-spacing:.1em;color:#a6b0a7}
+        .locker-roster-toolbar select{min-width:210px}
+        @media(max-width:700px){.formation-panel{padding:15px}.formation-field{min-height:230px;grid-template-rows:repeat(11,minmax(20px,1fr))}.formation-slot{width:clamp(27px,7vw,46px);min-height:34px}.formation-slot .slot-player{font-size:7px}.role-assignment{align-items:flex-start;flex-direction:column}.role-player-select{width:100%}}
+      `}</style>
       <header className="topbar">
         <div className="brand"><div className="brand-mark">⚽</div><div>BLITZ LEAGUE<small>TACTICAL PITCH · SEASON 01</small></div></div>
         <nav className="nav">
@@ -1801,7 +1926,7 @@ function App() {
         <div className="home-grid">
           <section className="panel">
             <div className="panel-heading"><h2>Campaign trail</h2><span>Progression</span></div>
-            <button className="campaign-card" style={{ width: "100%", textAlign: "left", cursor: "pointer" }} onClick={() => setScreen("campaign")}><div><strong>Match {Math.min(level, campaignStageCount)} · {fmt(activeFormat).name}</strong><p>See all {campaignStageCount} levels. Beat each match to unlock the next.</p></div><span className="badge">OPEN MAP →</span></button>
+            <button className="campaign-card" style={{ width: "100%", textAlign: "left", cursor: "pointer" }} onClick={() => setScreen("campaign")}><div><strong>Match {Math.min(level, campaignStageCount)} · {campaignFormatLabel(Math.min(level, campaignStageCount))}</strong><p>Campaign matches rotate between Classic, Street 3v3, and Golden Goal.</p></div><span className="badge">OPEN MAP →</span></button>
             <div className="small-note">BATTLE PASS · LEVEL {battlePassLevel} OF {battlePassFinalLevel}</div><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div>
             <div className="small-note">{battlePassLevel === battlePassFinalLevel ? "Final level complete" : `${nextLevelXpTarget - xp} XP to Level ${battlePassLevel + 1}`}</div>
             <div className="panel-heading" style={{ marginTop: 25 }}><h2>Your starting XI</h2><span>{startingXI.length} on field · {homePlayers.length} available · avg {startingXI.length ? Math.round(startingXI.reduce((total, player) => total + overallRating(player), 0) / startingXI.length) : 0} OVR</span></div>
@@ -1837,10 +1962,11 @@ function App() {
           const stage = index + 1;
           const unlocked = stage <= level;
           const completed = stage < level;
+          const stageFormat = campaignFormatForStage(stage);
           return <button key={stage} className={`campaign-level ${unlocked ? "available" : "locked"}`} disabled={!unlocked} onClick={() => startMatch(stage)}>
             <h3>LEVEL {String(stage).padStart(2, "0")} {completed ? "· COMPLETE" : ""}</h3>
             <strong>{name}</strong>
-            <p>{stage === level ? `AI level ${Math.ceil(stage / 2)} · ${100 * stage} XP for a win` : `AI level ${Math.ceil(stage / 2)} · ${100 * stage} XP · first to ${activeFormat === "golden-goal" ? 1 : activeFormat === "small-sided" ? 2 : 3} goals`}</p>
+            <p>{campaignFormatLabel(stage)} · AI level {Math.ceil(stage / 2)} · {100 * stage} XP · first to {stageFormat === "golden-goal" ? 1 : stageFormat === "small-sided" ? 2 : 3} goals</p>
             <span className="badge">{completed ? "REPLAY" : unlocked ? "PLAY LEVEL →" : "🔒 BEAT LEVEL " + (stage - 1)}</span>
           </button>;
         })}</div>
@@ -1910,22 +2036,22 @@ function App() {
         <div className="store-grid">
           <article className="store-card">
             <div className="store-kicker">Starter crate</div><h3>Basic Crate</h3>
-            <p>Low-cost drop. 92% player / 8% format bonus odds; player rewards are mostly below 76 OVR. Includes a random kit color.</p>
-            <button className="secondary" disabled={!devToolsEnabled && coins < 80} onClick={() => openCrate("basic")}>{devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 80"}</button>
+            <p>Low-cost drop. 92% player / 8% custom formation odds while both reward pools have rewards remaining; players are mostly below 76 OVR. Includes a random kit color.</p>
+            <button className="primary" disabled={!devToolsEnabled && coins < 80} onClick={() => openCrate("basic")}>{devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 80"}</button>
           </article>
           <article className="store-card">
             <div className="store-kicker">Premium crate</div><h3>Blitz Crate</h3>
-            <p>Higher-tier drop: 78% chance for a featured player rated 85+ OVR, or 22% for a format unlock, plus a random kit color.</p>
+            <p>Higher-tier drop: 78% featured player (85+ OVR) / 22% custom formation while both reward pools have rewards remaining, plus a random kit color.</p>
             <button className="primary" disabled={!devToolsEnabled && coins < 350} onClick={() => openCrate("blitz")}>{devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 350"}</button>
           </article>
           <article className="store-card" style={{ borderColor: thanksgivingActive ? "#d19a4b77" : "#ffffff16" }}>
             <div className="store-kicker" style={{ color: thanksgivingActive ? "#f2c276" : undefined }}>Limited-time · Thanksgiving</div>
             <h3>Thanksgiving Crate</h3>
-            <p>Same 78% player / 22% format odds and price as Blitz, with a different player and format pool. Includes a random kit color.</p>
+            <p>Same 78% player / 22% custom formation odds and price as Blitz while both reward pools have rewards remaining, with a different reward pool. Includes a random kit color.</p>
             {thanksgivingActive
               ? <div className="store-timer">ENDS NOV 30, 2026 · {formatCountdown(thanksgivingTimeLeft)}</div>
               : <div className="store-timer">EVENT ENDED · NOV 30, 2026</div>}
-            <button className="secondary" disabled={!thanksgivingActive || (!devToolsEnabled && coins < 350)} onClick={() => openCrate("thanksgiving")}>
+            <button className="primary" disabled={!thanksgivingActive || (!devToolsEnabled && coins < 350)} onClick={() => openCrate("thanksgiving")}>
               {thanksgivingActive ? devToolsEnabled ? "OPEN FREE · DEV" : "OPEN · ◈ 350" : "NO LONGER AVAILABLE"}
             </button>
           </article>
@@ -1933,7 +2059,7 @@ function App() {
       </div>}
 
       {screen === "locker" && <div className="content" style={{ paddingTop: 40 }}>
-        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Players are selected for the first 11 in their listed position. Change a player’s position here to customize your lineup. OVR weights the ability stat twice: (base rating + 2 × ability) ÷ 3. Ratings are game estimates, not official MLS ratings.</p>
+        <div className="eyebrow">Your club · manage squad</div><h1>Locker room</h1><p className="subtitle">Choose a formation, then assign exact players to specific pitch roles like left back, central midfielder, or striker. Formations are unlocked from crates. OVR weights ability twice: (base rating + 2 × ability) ÷ 3.</p>
         <section className="settings-card" style={{ maxWidth: "none", marginTop: 25 }}>
           <div className="panel-heading"><h2>Club kits</h2><span>{unlockedTeamColors.length} colors unlocked</span></div>
           <p className="small-note" style={{ lineHeight: 1.7 }}>Choose colors for your team and the opposition. Earn more colors from any crate; every crate includes a color drop.</p>
@@ -1949,11 +2075,57 @@ function App() {
             ? <div className="kit-warning" role="alert">⚠ Team colors are the same or too similar. Choose different colors so both sides are easy to tell apart.</div>
             : <div className="store-notice" style={{ marginBottom: 0 }}>✓ Team colors are distinct and ready for the next match.</div>}
         </section>
-        <div className="panel-heading" style={{ marginTop: 28, gap: 14, flexWrap: "wrap" }}>
-          <h2>Player roster</h2>
+        <section className="formation-panel">
+          <div className="formation-toolbar">
+            <div><div className="eyebrow">Starting XI · tactical setup</div><h2 style={{ margin: "8px 0 0", fontSize: 20 }}>Formation &amp; roles</h2></div>
+            <label className="small-note" htmlFor="active-formation">ACTIVE FORMATION</label>
+            <select id="active-formation" aria-label="Active team formation" value={activeFormationId}
+              onChange={(event) => {
+                const formation = formationById(event.target.value);
+                setActiveFormationId(formation.id);
+                setSelectedFormationSlotId(formation.slots[0].id);
+              }}>
+              {formations.filter((formation) => devToolsEnabled || unlockedFormations.includes(formation.id))
+                .map((formation) => <option value={formation.id} key={formation.id}>{formation.name} · {formation.id === defaultFormation.id ? "STARTER" : "CUSTOM"}</option>)}
+            </select>
+          </div>
+          <p className="small-note" style={{ lineHeight: 1.7 }}>{activeFormation.description}. Click a role on the pitch, then choose the specific player to assign there. Automatic roles use the best available player for that position group.</p>
+          <div className="formation-field" aria-label={`${activeFormation.name} tactical formation`}>
+            {activeFormation.slots.map((slot) => {
+              const player = formationXI.find((candidate) => candidate.tacticalSlot === slot.id);
+              const selected = selectedFormationSlot?.id === slot.id;
+              return <button key={slot.id} type="button" className={`formation-slot ${selected ? "selected" : ""}`}
+                style={{ gridColumn: slot.x + 1, gridRow: slot.y + 1 }}
+                aria-label={`${slot.label}: ${player?.name ?? "no player"}`}
+                aria-pressed={selected}
+                onClick={() => setSelectedFormationSlotId(slot.id)}>
+                <span className="slot-position">{slot.label}</span>
+                <span className="slot-player">{player?.name.split(" ").slice(-1)[0] ?? "EMPTY"}</span>
+              </button>;
+            })}
+          </div>
+          {selectedFormationSlot && <div className="role-assignment">
+            <div><strong>{selectedFormationSlot.label} · {selectedFormationSlot.position}</strong>
+              <small>{selectedFormationPlayer ? `${selectedFormationPlayer.name} · ${overallRating(selectedFormationPlayer)} OVR` : "No available player for this role"}</small>
+            </div>
+            <select className="role-player-select" aria-label={`Assign player to ${selectedFormationSlot.label}`}
+              value={formationAssignments[activeFormationId]?.[selectedFormationSlot.id] ?? "auto"}
+              onChange={(event) => setFormationSlotPlayer(selectedFormationSlot.id, event.target.value)}>
+              <option value="auto">Auto-fill best available</option>
+              {homePlayers.filter((player) => player.position === selectedFormationSlot.position
+                && !Object.entries(formationAssignments[activeFormationId] ?? {})
+                  .some(([otherSlot, playerId]) => otherSlot !== selectedFormationSlot.id && playerId === player.id))
+                .sort((a, b) => overallRating(b) - overallRating(a))
+                .map((player) => <option value={player.id} key={player.id}>{player.name} · {player.club} · {overallRating(player)} OVR</option>)}
+            </select>
+          </div>}
+          <div className="small-note" style={{ marginTop: 12 }}>{formationXI.length} / 11 roles filled · lineup uses the selected formation when a match starts.</div>
+        </section>
+        <div className="locker-roster-toolbar">
+          <h2 style={{ fontSize: 14, margin: 0 }}>Player roster</h2>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <label htmlFor="locker-player-sort" className="small-note">SORT BY</label>
-            <select id="locker-player-sort" aria-label="Sort player roster"
+            <label htmlFor="locker-player-sort">SORT BY</label>
+            <select className="locker-sort-select" id="locker-player-sort" aria-label="Sort player roster"
               value={playerSort} onChange={(event) => setPlayerSort(event.target.value as PlayerSort)}>
               <option value="default">Default roster order</option>
               <option value="name-asc">Name · A to Z</option>
@@ -1978,21 +2150,11 @@ function App() {
         <div className="locker-grid">{sortedRoster.map((player) => {
           const unlocked = unlockedPlayers.includes(player.id);
           const unlockAt = playerUnlocks[player.id];
-          const currentPosition = customPositions[player.id] ?? player.position;
-          const isStarter = startingXI.some((starter) => starter.id === player.id);
+          const assignedSlot = formationXI.find((starter) => starter.id === player.id)?.tacticalSlot;
           return <article key={player.id} className="roster-card">
             <div className="roster-top"><div className="player-avatar" style={{ background: player.color }}>{player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><h3>{player.name}</h3><small style={{ color: "#89948b", fontSize: 9 }}>{player.club}</small></div><span className="rating">{overallRating(player)} OVR</span></div>
             <p>{player.ability} · Ability {player.abilityStat}/100 (weighted ×2)</p>
-            <div className="roster-meta"><span>{unlocked ? (isStarter ? "STARTING XI" : "SQUAD") : `PASS LV ${unlockAt}`}</span>
-              <select aria-label={`${player.name} position`} value={currentPosition} disabled={!unlocked}
-                onChange={(event) => {
-                  const position = event.target.value as Position;
-                  setCustomPositions((current) => ({ ...current, [player.id]: position === player.position ? undefined : position }));
-                  setNotice(`${player.name} position set to ${position}. Your starting XI updates automatically.`);
-                }}>
-                {(["GK", "DEF", "MID", "FWD"] as Position[]).map((position) => <option key={position} value={position}>{position}</option>)}
-              </select>
-            </div>
+            <div className="roster-meta"><span>{unlocked ? (assignedSlot ? `${assignedSlot} · STARTING XI` : "SQUAD") : `PASS LV ${unlockAt}`}</span><span>{player.position} eligible</span></div>
             {!unlocked && <button className="secondary" style={{ width: "100%", marginTop: 10, padding: 9 }} disabled>UNLOCK IN SEASON PASS</button>}
           </article>;
         })}</div>
@@ -2002,19 +2164,27 @@ function App() {
 
       {screen === "quickplay" && <div className="content quickplay-page">
         <button className="ghost-btn" onClick={() => setScreen("home")}>← DASHBOARD</button>
-        <div className="eyebrow" style={{ marginTop: 25 }}>Choose how to play · full 11v11</div>
+        <div className="eyebrow" style={{ marginTop: 25 }}>Choose your match rules</div>
         <h1>Quickplay</h1>
-        <p className="subtitle">Pick a match type. Quickplay uses the full pitch, a 90-minute clock, halftime, and first-to-three-goals rules.</p>
+        <p className="subtitle">Choose an unlocked mode. Campaign matches also rotate between Classic, Street 3v3, and Golden Goal.</p>
+        <div className="format-grid">{formats.map((format) => <article className="format-card" key={format.id}>
+          <h3>{format.name}</h3><p>{format.detail} · Full 90-minute match with halftime.</p>
+          <button className={formatUnlocked(format) ? activeFormat === format.id ? "primary" : "secondary" : "secondary"}
+            disabled={!formatUnlocked(format)}
+            onClick={() => setActiveFormat(format.id)}>
+            {formatUnlocked(format) ? activeFormat === format.id ? "SELECTED" : "SELECT MODE" : `UNLOCK AT LEVEL ${format.unlock}`}
+          </button>
+        </article>)}</div>
         <div className="quickplay-options">
           <button className="quickplay-option" onClick={startCpuQuickplay}>
             <span className="quickplay-icon">🤖</span>
-            <strong>CPU · 11v11</strong>
+            <strong>CPU · {fmt(activeFormat).name}</strong>
             <p>Play on your own against the computer. The opponent gets stronger as your campaign level rises.</p>
             <span className="badge">PLAY NOW</span>
           </button>
           <button className="quickplay-option" onClick={startLocalQuickplay}>
             <span className="quickplay-icon">👥</span>
-            <strong>Local · 11v11</strong>
+            <strong>Local · {fmt(activeFormat).name}</strong>
             <p>Two players, one device. Take turns and hand the screen to the other player. Both teams use the same squad.</p>
             <span className="badge">PASS &amp; PLAY</span>
           </button>
@@ -2073,7 +2243,7 @@ function App() {
 
       {screen === "match" && <div className="content match-layout">
         <section>
-          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(quickplayMode !== null ? "classic" : activeFormat).name.toUpperCase()}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {match.formationId}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
           {match.halftime && <div className="halftime-panel"><div><strong>Halftime · {scoreLabel}</strong><small>Teams have switched ends. Each in-game minute lasts 3.5 seconds.</small></div><button className="primary" onClick={resumeSecondHalf}>START SECOND HALF</button></div>}
           {teamColorsSimilar && <div className="kit-warning" role="alert">⚠ Your team and opposition colors are too similar. Change one in Locker Room to make the sides easier to distinguish.</div>}
           <div className="pitch-wrap"><div className="pitch-viewport"><div className="pitch" aria-label="22 by 11 football pitch" style={{ transform: `translate(-${pitchCameraX}%, -${pitchCameraY}%)` }}>
@@ -2092,7 +2262,7 @@ function App() {
               </button>;
             }))}
             <div className="goal-overlay" aria-hidden="true"><span className="penalty-box left" /><span className="penalty-box right" /><span className="goal-frame left" /><span className="goal-frame right" /></div>
-          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: kitColorById(homeKitColorId).value }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: kitColorById(awayKitColorId).value }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{quickplayMode !== null || activeFormat !== "small-sided" ? "11v11" : "3v3"} · 22 × 11 TILES</span></div></div>
+          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: kitColorById(homeKitColorId).value }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: kitColorById(awayKitColorId).value }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{match.format === "small-sided" ? "3v3" : "11v11"} · 22 × 11 TILES</span></div></div>
           <div className="message">{match.message}</div>
         </section>
         <aside className="sidebar">

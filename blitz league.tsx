@@ -687,6 +687,38 @@ const findBestReachableMove = (
   }
   return best;
 };
+const findPassingRun = (tokens: Token[], carrier: Token, half: 1 | 2) => {
+  const attackDirection = carrier.side === "home"
+    ? (half === 1 ? 1 : -1)
+    : (half === 1 ? -1 : 1);
+  const range = passingRange(carrier.player);
+  return tokens.filter((token) => token.side === carrier.side
+    && token.player.id !== carrier.player.id
+    && token.player.position !== "GK")
+    .map((runner) => ({
+      runner,
+      move: findBestReachableMove(tokens, runner, 2 + movementBonus(runner.player), (point) => {
+        const gap = distance(point, carrier);
+        if (gap === 0 || gap > range
+          || findInterceptor(tokens, carrier.side, lineCells(carrier, point))) return -Infinity;
+        const forwardProgress = (point.x - carrier.x) * attackDirection;
+        const nearestDefender = Math.min(...tokens
+          .filter((token) => token.side !== carrier.side)
+          .map((token) => distance(token, point)), 99);
+        const roleValue = runner.player.position === "MID" ? 3 : runner.player.position === "FWD" ? 2 : 0;
+        const targetSupportGap = Math.min(4, range - 1);
+        return forwardProgress * 1.6 + roleValue
+          - Math.abs(gap - targetSupportGap) * 0.8
+          - Math.abs(point.y - 5) * 0.35
+          + Math.min(nearestDefender, 6) * 0.3
+          - Math.max(0, 2 - nearestDefender) * 1.5;
+      }),
+    }))
+    .filter((candidate): candidate is typeof candidate & {
+      move: NonNullable<typeof candidate.move>;
+    } => !!candidate.move && Number.isFinite(candidate.move.score))
+    .sort((a, b) => b.move.score - a.move.score)[0];
+};
 const resetKickoff = (tokens: Token[], side: "home" | "away", half: 1 | 2, smallSided: boolean) => {
   const homeStarts: [number, number][] = smallSided
     ? [[2, 5], [8, 3], [8, 7]]
@@ -1638,7 +1670,15 @@ function App() {
           if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
           ai.message = `${owner.player.name} stays back and plays a safe pass to ${receiver.player.name}.`;
         } else {
-          ai.message = `${owner.player.name} holds position near the goal and protects the defensive shape.`;
+          const supportRun = findPassingRun(ai.tokens, owner, ai.half);
+          if (supportRun) {
+            ai.tokens = ai.tokens.map((token) => token.player.id === supportRun.runner.player.id
+              ? { ...token, x: supportRun.move.x, y: supportRun.move.y }
+              : token);
+            ai.message = `${supportRun.runner.player.name} checks toward ${owner.player.name} to open a safe outlet pass.`;
+          } else {
+            ai.message = `${owner.player.name} holds position near the goal and protects the defensive shape.`;
+          }
         }
       }
     } else if (owner) {
@@ -1710,28 +1750,38 @@ function App() {
           ai.message = `The opposition's shot from ${goalDistance} tiles out goes wide. The ball is loose by your goal.`;
         }
       } else {
-        const attackDirection = latest.half === 1 ? -1 : 1;
-        const approachX = attackDirection < 0 ? 1 : 20;
-        const route = findRouteToTargets(ai.tokens, owner, Array.from({ length: 7 }, (_, index) => ({
-          x: approachX,
-          y: index + 2,
-        })));
-        const moveDistance = 2 + movementBonus(owner.player);
-        const next = route[Math.min(moveDistance, route.length) - 1]
-          ?? findBestReachableMove(ai.tokens, owner, moveDistance, (point) =>
-            -ownGoalDistance({ ...owner, x: point.x, y: point.y }, ai.half) * 3
-              - Math.abs(point.y - 5) * 0.3
-              - ai.tokens.filter((token) => token.side === "home")
-                .reduce((nearest, defender) => Math.min(nearest, distance(point, defender)), 99) * 0.1);
-        if (next) {
-          const previousBallX = ai.ball.x;
-          owner.x = next.x;
-          owner.y = next.y;
-          ai.ball = { x: next.x, y: next.y };
-          if (ai.stealProtectedSide === "away") ai.stealProtectedSide = undefined;
-          ai.tokens = shiftFormationWithBall(ai.tokens, previousBallX, next.x, owner.player.id, ai.half);
+        const supportRun = (!receiver || passInterceptor)
+          ? findPassingRun(ai.tokens, owner, ai.half)
+          : undefined;
+        if (supportRun) {
+          ai.tokens = ai.tokens.map((token) => token.player.id === supportRun.runner.player.id
+            ? { ...token, x: supportRun.move.x, y: supportRun.move.y }
+            : token);
+          ai.message = `${supportRun.runner.player.name} cuts into space and gives ${owner.player.name} a clear passing option.`;
+        } else {
+          const attackDirection = latest.half === 1 ? -1 : 1;
+          const approachX = attackDirection < 0 ? 1 : 20;
+          const route = findRouteToTargets(ai.tokens, owner, Array.from({ length: 7 }, (_, index) => ({
+            x: approachX,
+            y: index + 2,
+          })));
+          const moveDistance = 2 + movementBonus(owner.player);
+          const next = route[Math.min(moveDistance, route.length) - 1]
+            ?? findBestReachableMove(ai.tokens, owner, moveDistance, (point) =>
+              -ownGoalDistance({ ...owner, x: point.x, y: point.y }, ai.half) * 3
+                - Math.abs(point.y - 5) * 0.3
+                - ai.tokens.filter((token) => token.side === "home")
+                  .reduce((nearest, defender) => Math.min(nearest, distance(point, defender)), 99) * 0.1);
+          if (next) {
+            const previousBallX = ai.ball.x;
+            owner.x = next.x;
+            owner.y = next.y;
+            ai.ball = { x: next.x, y: next.y };
+            if (ai.stealProtectedSide === "away") ai.stealProtectedSide = undefined;
+            ai.tokens = shiftFormationWithBall(ai.tokens, previousBallX, next.x, owner.player.id, ai.half);
+          }
+          ai.message = "The opposition advances. Your turn.";
         }
-        ai.message = "The opposition advances. Your turn.";
       }
     } else {
       const carrier = ai.tokens.find((t) => t.x === ai.ball.x && t.y === ai.ball.y);

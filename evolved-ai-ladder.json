@@ -1,0 +1,1365 @@
+{
+  "version": 2,
+  "method": "teach-breed-mutate-genetic-algorithm",
+  "inspiration": "https://www.youtube.com/watch?v=IoM5zUI8oFc",
+  "seed": 1592594996,
+  "generations": 70,
+  "population": 112,
+  "matchesPerOpponent": 2,
+  "matchesSimulated": 157664,
+  "trainingOpponents": 10,
+  "validationOpponents": 8,
+  "genes": [
+    "finishing",
+    "progression",
+    "passing",
+    "pressing",
+    "marking",
+    "countering"
+  ],
+  "training": {
+    "bestFitness": 3.6098,
+    "bestWinRate": 0.75,
+    "bestGoalDifference": 2.05
+  },
+  "validation": {
+    "sampleSize": 32,
+    "winRate": 0.71875,
+    "drawRate": 0.125,
+    "goalDifference": 1.3125,
+    "fitness": 2.73731
+  },
+  "generationHistory": [
+    {
+      "generation": 0,
+      "best": 2.7984,
+      "average": -0.40995,
+      "winRate": 0.75
+    },
+    {
+      "generation": 1,
+      "best": 2.9735,
+      "average": 0.25792,
+      "winRate": 0.75
+    },
+    {
+      "generation": 2,
+      "best": 2.8429,
+      "average": 0.78583,
+      "winRate": 0.75
+    },
+    {
+      "generation": 3,
+      "best": 3.1321,
+      "average": 1.1552,
+      "winRate": 0.8
+    },
+    {
+      "generation": 4,
+      "best": 3.6972,
+      "average": 1.36913,
+      "winRate": 0.8
+    },
+    {
+      "generation": 5,
+      "best": 3.4018,
+      "average": 1.60232,
+      "winRate": 0.8
+    },
+    {
+      "generation": 6,
+      "best": 3.477,
+      "average": 1.66741,
+      "winRate": 0.85
+    },
+    {
+      "generation": 7,
+      "best": 4.1398,
+      "average": 1.89247,
+      "winRate": 0.85
+    },
+    {
+      "generation": 8,
+      "best": 4.0939,
+      "average": 2.05609,
+      "winRate": 0.95
+    },
+    {
+      "generation": 9,
+      "best": 4.6815,
+      "average": 2.29493,
+      "winRate": 0.9
+    },
+    {
+      "generation": 10,
+      "best": 4.1369,
+      "average": 2.31781,
+      "winRate": 0.9
+    },
+    {
+      "generation": 11,
+      "best": 4.2401,
+      "average": 2.43238,
+      "winRate": 0.95
+    },
+    {
+      "generation": 12,
+      "best": 3.7246,
+      "average": 2.51586,
+      "winRate": 0.8
+    },
+    {
+      "generation": 13,
+      "best": 4.1531,
+      "average": 2.66025,
+      "winRate": 0.85
+    },
+    {
+      "generation": 14,
+      "best": 4.5182,
+      "average": 2.64515,
+      "winRate": 0.95
+    },
+    {
+      "generation": 15,
+      "best": 4.4647,
+      "average": 2.56559,
+      "winRate": 0.9
+    },
+    {
+      "generation": 16,
+      "best": 3.8859,
+      "average": 2.7571,
+      "winRate": 0.85
+    },
+    {
+      "generation": 17,
+      "best": 3.938,
+      "average": 2.72961,
+      "winRate": 0.8
+    },
+    {
+      "generation": 18,
+      "best": 4.7221,
+      "average": 2.81822,
+      "winRate": 0.9
+    },
+    {
+      "generation": 19,
+      "best": 4.1814,
+      "average": 2.85862,
+      "winRate": 0.9
+    },
+    {
+      "generation": 20,
+      "best": 4.0025,
+      "average": 2.71083,
+      "winRate": 0.85
+    },
+    {
+      "generation": 21,
+      "best": 4.592,
+      "average": 2.84159,
+      "winRate": 0.9
+    },
+    {
+      "generation": 22,
+      "best": 4.4628,
+      "average": 2.82442,
+      "winRate": 0.9
+    },
+    {
+      "generation": 23,
+      "best": 4.1962,
+      "average": 2.69095,
+      "winRate": 0.95
+    },
+    {
+      "generation": 24,
+      "best": 4.3778,
+      "average": 2.82506,
+      "winRate": 0.9
+    },
+    {
+      "generation": 25,
+      "best": 4.3536,
+      "average": 2.80542,
+      "winRate": 0.9
+    },
+    {
+      "generation": 26,
+      "best": 4.5696,
+      "average": 2.79415,
+      "winRate": 0.9
+    },
+    {
+      "generation": 27,
+      "best": 4.0159,
+      "average": 2.60883,
+      "winRate": 0.85
+    },
+    {
+      "generation": 28,
+      "best": 4.5497,
+      "average": 2.67924,
+      "winRate": 0.95
+    },
+    {
+      "generation": 29,
+      "best": 4.2271,
+      "average": 2.78064,
+      "winRate": 0.95
+    },
+    {
+      "generation": 30,
+      "best": 4.339,
+      "average": 2.70375,
+      "winRate": 0.85
+    },
+    {
+      "generation": 31,
+      "best": 4.0496,
+      "average": 2.71595,
+      "winRate": 0.8
+    },
+    {
+      "generation": 32,
+      "best": 4.3109,
+      "average": 2.69599,
+      "winRate": 0.85
+    },
+    {
+      "generation": 33,
+      "best": 4.3984,
+      "average": 2.89149,
+      "winRate": 0.95
+    },
+    {
+      "generation": 34,
+      "best": 4.3827,
+      "average": 2.70801,
+      "winRate": 0.9
+    },
+    {
+      "generation": 35,
+      "best": 4.2842,
+      "average": 2.74987,
+      "winRate": 0.95
+    },
+    {
+      "generation": 36,
+      "best": 4.5507,
+      "average": 2.76058,
+      "winRate": 0.95
+    },
+    {
+      "generation": 37,
+      "best": 4.3465,
+      "average": 2.87364,
+      "winRate": 0.9
+    },
+    {
+      "generation": 38,
+      "best": 4.3926,
+      "average": 2.79215,
+      "winRate": 0.95
+    },
+    {
+      "generation": 39,
+      "best": 4.3155,
+      "average": 2.93094,
+      "winRate": 0.8
+    },
+    {
+      "generation": 40,
+      "best": 4.4046,
+      "average": 2.7821,
+      "winRate": 0.85
+    },
+    {
+      "generation": 41,
+      "best": 4.4668,
+      "average": 2.86112,
+      "winRate": 0.9
+    },
+    {
+      "generation": 42,
+      "best": 4.6935,
+      "average": 2.94114,
+      "winRate": 0.9
+    },
+    {
+      "generation": 43,
+      "best": 4.1855,
+      "average": 2.81259,
+      "winRate": 0.8
+    },
+    {
+      "generation": 44,
+      "best": 4.287,
+      "average": 3.01877,
+      "winRate": 0.9
+    },
+    {
+      "generation": 45,
+      "best": 4.8038,
+      "average": 2.91364,
+      "winRate": 0.9
+    },
+    {
+      "generation": 46,
+      "best": 4.7088,
+      "average": 2.91349,
+      "winRate": 0.85
+    },
+    {
+      "generation": 47,
+      "best": 4.1239,
+      "average": 2.89717,
+      "winRate": 0.9
+    },
+    {
+      "generation": 48,
+      "best": 4.2217,
+      "average": 2.91871,
+      "winRate": 0.95
+    },
+    {
+      "generation": 49,
+      "best": 4.2714,
+      "average": 2.87814,
+      "winRate": 0.9
+    },
+    {
+      "generation": 50,
+      "best": 4.8605,
+      "average": 3.05962,
+      "winRate": 0.95
+    },
+    {
+      "generation": 51,
+      "best": 4.9374,
+      "average": 2.95727,
+      "winRate": 0.9
+    },
+    {
+      "generation": 52,
+      "best": 4.4658,
+      "average": 2.84969,
+      "winRate": 0.85
+    },
+    {
+      "generation": 53,
+      "best": 4.2612,
+      "average": 3.00764,
+      "winRate": 0.9
+    },
+    {
+      "generation": 54,
+      "best": 4.2756,
+      "average": 2.86116,
+      "winRate": 0.8
+    },
+    {
+      "generation": 55,
+      "best": 4.0416,
+      "average": 2.98396,
+      "winRate": 0.85
+    },
+    {
+      "generation": 56,
+      "best": 4.4948,
+      "average": 2.93085,
+      "winRate": 0.95
+    },
+    {
+      "generation": 57,
+      "best": 4.2648,
+      "average": 2.75151,
+      "winRate": 0.95
+    },
+    {
+      "generation": 58,
+      "best": 4.1425,
+      "average": 2.96352,
+      "winRate": 0.85
+    },
+    {
+      "generation": 59,
+      "best": 4.297,
+      "average": 2.87981,
+      "winRate": 0.8
+    },
+    {
+      "generation": 60,
+      "best": 4.4692,
+      "average": 2.86331,
+      "winRate": 0.9
+    },
+    {
+      "generation": 61,
+      "best": 4.5952,
+      "average": 2.92257,
+      "winRate": 0.95
+    },
+    {
+      "generation": 62,
+      "best": 4.0793,
+      "average": 2.84461,
+      "winRate": 0.85
+    },
+    {
+      "generation": 63,
+      "best": 4.4599,
+      "average": 2.81,
+      "winRate": 0.9
+    },
+    {
+      "generation": 64,
+      "best": 4.1344,
+      "average": 2.90096,
+      "winRate": 0.75
+    },
+    {
+      "generation": 65,
+      "best": 4.2133,
+      "average": 2.82082,
+      "winRate": 0.85
+    },
+    {
+      "generation": 66,
+      "best": 4.2167,
+      "average": 2.85263,
+      "winRate": 0.95
+    },
+    {
+      "generation": 67,
+      "best": 4.5886,
+      "average": 2.69324,
+      "winRate": 0.8
+    },
+    {
+      "generation": 68,
+      "best": 4.1253,
+      "average": 2.84029,
+      "winRate": 0.9
+    },
+    {
+      "generation": 69,
+      "best": 4.7319,
+      "average": 2.76555,
+      "winRate": 0.95
+    }
+  ],
+  "champion": {
+    "finishing": 0.88055,
+    "progression": 0.95632,
+    "passing": 0.47174,
+    "pressing": 0.82971,
+    "marking": 0.98,
+    "countering": 0.57108,
+    "fitness": 1
+  },
+  "ladder": [
+    {
+      "finishing": 0.56,
+      "progression": 0.58,
+      "passing": 0.74,
+      "pressing": 0.64,
+      "marking": 0.86,
+      "countering": 0.5,
+      "fitness": 0
+    },
+    {
+      "finishing": 0.664,
+      "progression": 0.5156,
+      "passing": 0.836,
+      "pressing": 0.4832,
+      "marking": 0.8528,
+      "countering": 0.5492,
+      "fitness": 0.1464
+    },
+    {
+      "finishing": 0.60448,
+      "progression": 0.98,
+      "passing": 0.76283,
+      "pressing": 0.52611,
+      "marking": 0.75623,
+      "countering": 0.48276,
+      "fitness": 0.26618
+    },
+    {
+      "finishing": 0.91461,
+      "progression": 0.81705,
+      "passing": 0.49347,
+      "pressing": 0.80658,
+      "marking": 0.63789,
+      "countering": 0.87894,
+      "fitness": 0.32915
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.93896,
+      "passing": 0.48987,
+      "pressing": 0.51877,
+      "marking": 0.98,
+      "countering": 0.27475,
+      "fitness": 0.36407
+    },
+    {
+      "finishing": 0.47932,
+      "progression": 0.92697,
+      "passing": 0.45217,
+      "pressing": 0.6597,
+      "marking": 0.75188,
+      "countering": 0.73554,
+      "fitness": 0.39904
+    },
+    {
+      "finishing": 0.80178,
+      "progression": 0.98,
+      "passing": 0.51952,
+      "pressing": 0.55374,
+      "marking": 0.74474,
+      "countering": 0.80185,
+      "fitness": 0.44673
+    },
+    {
+      "finishing": 0.81573,
+      "progression": 0.84023,
+      "passing": 0.72567,
+      "pressing": 0.51994,
+      "marking": 0.5801,
+      "countering": 0.31842,
+      "fitness": 0.4633
+    },
+    {
+      "finishing": 0.7964,
+      "progression": 0.83855,
+      "passing": 0.98,
+      "pressing": 0.26427,
+      "marking": 0.75595,
+      "countering": 0.69436,
+      "fitness": 0.49482
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.89548,
+      "passing": 0.5655,
+      "pressing": 0.63329,
+      "marking": 0.50042,
+      "countering": 0.83414,
+      "fitness": 0.51724
+    },
+    {
+      "finishing": 0.92434,
+      "progression": 0.92226,
+      "passing": 0.72682,
+      "pressing": 0.76319,
+      "marking": 0.58637,
+      "countering": 0.8491,
+      "fitness": 0.54194
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.88015,
+      "passing": 0.61119,
+      "pressing": 0.90828,
+      "marking": 0.94673,
+      "countering": 0.76626,
+      "fitness": 0.57841
+    },
+    {
+      "finishing": 0.96546,
+      "progression": 0.95658,
+      "passing": 0.54931,
+      "pressing": 0.69064,
+      "marking": 0.71147,
+      "countering": 0.79857,
+      "fitness": 0.59628
+    },
+    {
+      "finishing": 0.90486,
+      "progression": 0.95165,
+      "passing": 0.52923,
+      "pressing": 0.66461,
+      "marking": 0.82873,
+      "countering": 0.36348,
+      "fitness": 0.6085
+    },
+    {
+      "finishing": 0.8946,
+      "progression": 0.97202,
+      "passing": 0.32217,
+      "pressing": 0.76971,
+      "marking": 0.9274,
+      "countering": 0.61238,
+      "fitness": 0.62469
+    },
+    {
+      "finishing": 0.9211,
+      "progression": 0.97867,
+      "passing": 0.43341,
+      "pressing": 0.88571,
+      "marking": 0.85025,
+      "countering": 0.61453,
+      "fitness": 0.63229
+    },
+    {
+      "finishing": 0.91943,
+      "progression": 0.95906,
+      "passing": 0.33131,
+      "pressing": 0.94838,
+      "marking": 0.90198,
+      "countering": 0.47001,
+      "fitness": 0.63797
+    },
+    {
+      "finishing": 0.73385,
+      "progression": 0.93042,
+      "passing": 0.48301,
+      "pressing": 0.87185,
+      "marking": 0.82053,
+      "countering": 0.70742,
+      "fitness": 0.64179
+    },
+    {
+      "finishing": 0.95511,
+      "progression": 0.97626,
+      "passing": 0.20039,
+      "pressing": 0.98,
+      "marking": 0.91395,
+      "countering": 0.66881,
+      "fitness": 0.64385
+    },
+    {
+      "finishing": 0.91702,
+      "progression": 0.95071,
+      "passing": 0.44374,
+      "pressing": 0.90522,
+      "marking": 0.92851,
+      "countering": 0.48352,
+      "fitness": 0.64678
+    },
+    {
+      "finishing": 0.90812,
+      "progression": 0.97502,
+      "passing": 0.46624,
+      "pressing": 0.91846,
+      "marking": 0.95569,
+      "countering": 0.53825,
+      "fitness": 0.64958
+    },
+    {
+      "finishing": 0.90283,
+      "progression": 0.93969,
+      "passing": 0.54291,
+      "pressing": 0.93644,
+      "marking": 0.94058,
+      "countering": 0.51086,
+      "fitness": 0.65223
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.9781,
+      "passing": 0.41759,
+      "pressing": 0.96145,
+      "marking": 0.91106,
+      "countering": 0.54642,
+      "fitness": 0.65403
+    },
+    {
+      "finishing": 0.86489,
+      "progression": 0.97133,
+      "passing": 0.47873,
+      "pressing": 0.8137,
+      "marking": 0.88636,
+      "countering": 0.52073,
+      "fitness": 0.65566
+    },
+    {
+      "finishing": 0.67991,
+      "progression": 0.9742,
+      "passing": 0.33953,
+      "pressing": 0.86093,
+      "marking": 0.87631,
+      "countering": 0.72623,
+      "fitness": 0.65736
+    },
+    {
+      "finishing": 0.87591,
+      "progression": 0.97911,
+      "passing": 0.47814,
+      "pressing": 0.98,
+      "marking": 0.77732,
+      "countering": 0.81708,
+      "fitness": 0.65952
+    },
+    {
+      "finishing": 0.74306,
+      "progression": 0.97611,
+      "passing": 0.47488,
+      "pressing": 0.92007,
+      "marking": 0.92108,
+      "countering": 0.53223,
+      "fitness": 0.66218
+    },
+    {
+      "finishing": 0.90355,
+      "progression": 0.91075,
+      "passing": 0.65157,
+      "pressing": 0.87262,
+      "marking": 0.82369,
+      "countering": 0.84794,
+      "fitness": 0.66415
+    },
+    {
+      "finishing": 0.85925,
+      "progression": 0.88885,
+      "passing": 0.39097,
+      "pressing": 0.64623,
+      "marking": 0.98,
+      "countering": 0.55969,
+      "fitness": 0.66588
+    },
+    {
+      "finishing": 0.95788,
+      "progression": 0.97013,
+      "passing": 0.46459,
+      "pressing": 0.94372,
+      "marking": 0.8666,
+      "countering": 0.54185,
+      "fitness": 0.66731
+    },
+    {
+      "finishing": 0.95461,
+      "progression": 0.95962,
+      "passing": 0.29729,
+      "pressing": 0.93607,
+      "marking": 0.89448,
+      "countering": 0.58459,
+      "fitness": 0.66888
+    },
+    {
+      "finishing": 0.89997,
+      "progression": 0.98,
+      "passing": 0.42163,
+      "pressing": 0.91821,
+      "marking": 0.98,
+      "countering": 0.58266,
+      "fitness": 0.67126
+    },
+    {
+      "finishing": 0.7639,
+      "progression": 0.98,
+      "passing": 0.364,
+      "pressing": 0.81045,
+      "marking": 0.98,
+      "countering": 0.57704,
+      "fitness": 0.67249
+    },
+    {
+      "finishing": 0.92107,
+      "progression": 0.91189,
+      "passing": 0.68364,
+      "pressing": 0.92119,
+      "marking": 0.90276,
+      "countering": 0.61032,
+      "fitness": 0.67394
+    },
+    {
+      "finishing": 0.9756,
+      "progression": 0.98,
+      "passing": 0.38598,
+      "pressing": 0.98,
+      "marking": 0.93265,
+      "countering": 0.64699,
+      "fitness": 0.67587
+    },
+    {
+      "finishing": 0.96016,
+      "progression": 0.98,
+      "passing": 0.55033,
+      "pressing": 0.91384,
+      "marking": 0.9742,
+      "countering": 0.304,
+      "fitness": 0.67692
+    },
+    {
+      "finishing": 0.93884,
+      "progression": 0.94951,
+      "passing": 0.46293,
+      "pressing": 0.85942,
+      "marking": 0.86785,
+      "countering": 0.6492,
+      "fitness": 0.67828
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.98,
+      "passing": 0.38997,
+      "pressing": 0.94622,
+      "marking": 0.93627,
+      "countering": 0.65413,
+      "fitness": 0.67959
+    },
+    {
+      "finishing": 0.89853,
+      "progression": 0.97527,
+      "passing": 0.4337,
+      "pressing": 0.89234,
+      "marking": 0.98,
+      "countering": 0.57636,
+      "fitness": 0.68109
+    },
+    {
+      "finishing": 0.89206,
+      "progression": 0.97593,
+      "passing": 0.39442,
+      "pressing": 0.94524,
+      "marking": 0.91403,
+      "countering": 0.52487,
+      "fitness": 0.68237
+    },
+    {
+      "finishing": 0.89243,
+      "progression": 0.96278,
+      "passing": 0.45551,
+      "pressing": 0.93644,
+      "marking": 0.90055,
+      "countering": 0.49613,
+      "fitness": 0.68391
+    },
+    {
+      "finishing": 0.97096,
+      "progression": 0.96669,
+      "passing": 0.42722,
+      "pressing": 0.91103,
+      "marking": 0.94785,
+      "countering": 0.47484,
+      "fitness": 0.68482
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.97819,
+      "passing": 0.40997,
+      "pressing": 0.54357,
+      "marking": 0.98,
+      "countering": 0.59539,
+      "fitness": 0.6862
+    },
+    {
+      "finishing": 0.9205,
+      "progression": 0.97554,
+      "passing": 0.65574,
+      "pressing": 0.80348,
+      "marking": 0.69794,
+      "countering": 0.76572,
+      "fitness": 0.68902
+    },
+    {
+      "finishing": 0.90227,
+      "progression": 0.96924,
+      "passing": 0.43456,
+      "pressing": 0.82557,
+      "marking": 0.95508,
+      "countering": 0.70226,
+      "fitness": 0.69045
+    },
+    {
+      "finishing": 0.79749,
+      "progression": 0.95723,
+      "passing": 0.50125,
+      "pressing": 0.96995,
+      "marking": 0.83729,
+      "countering": 0.62494,
+      "fitness": 0.69236
+    },
+    {
+      "finishing": 0.86566,
+      "progression": 0.98,
+      "passing": 0.44924,
+      "pressing": 0.89717,
+      "marking": 0.7003,
+      "countering": 0.5761,
+      "fitness": 0.69397
+    },
+    {
+      "finishing": 0.94928,
+      "progression": 0.98,
+      "passing": 0.40799,
+      "pressing": 0.95572,
+      "marking": 0.92088,
+      "countering": 0.88819,
+      "fitness": 0.69533
+    },
+    {
+      "finishing": 0.87764,
+      "progression": 0.97495,
+      "passing": 0.42638,
+      "pressing": 0.86029,
+      "marking": 0.96414,
+      "countering": 0.65408,
+      "fitness": 0.69683
+    },
+    {
+      "finishing": 0.92849,
+      "progression": 0.95591,
+      "passing": 0.47914,
+      "pressing": 0.77978,
+      "marking": 0.88756,
+      "countering": 0.4669,
+      "fitness": 0.69856
+    },
+    {
+      "finishing": 0.9598,
+      "progression": 0.98,
+      "passing": 0.45175,
+      "pressing": 0.92792,
+      "marking": 0.93511,
+      "countering": 0.60667,
+      "fitness": 0.70001
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.87534,
+      "passing": 0.42539,
+      "pressing": 0.92953,
+      "marking": 0.86677,
+      "countering": 0.30037,
+      "fitness": 0.70194
+    },
+    {
+      "finishing": 0.8932,
+      "progression": 0.92872,
+      "passing": 0.43146,
+      "pressing": 0.93112,
+      "marking": 0.9423,
+      "countering": 0.60658,
+      "fitness": 0.70382
+    },
+    {
+      "finishing": 0.96348,
+      "progression": 0.96472,
+      "passing": 0.53174,
+      "pressing": 0.95414,
+      "marking": 0.98,
+      "countering": 0.58423,
+      "fitness": 0.70587
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.9694,
+      "passing": 0.40503,
+      "pressing": 0.98,
+      "marking": 0.92787,
+      "countering": 0.66862,
+      "fitness": 0.70802
+    },
+    {
+      "finishing": 0.97526,
+      "progression": 0.89928,
+      "passing": 0.41125,
+      "pressing": 0.90381,
+      "marking": 0.86092,
+      "countering": 0.48668,
+      "fitness": 0.70932
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.98,
+      "passing": 0.4087,
+      "pressing": 0.95111,
+      "marking": 0.83432,
+      "countering": 0.76381,
+      "fitness": 0.71148
+    },
+    {
+      "finishing": 0.93605,
+      "progression": 0.92337,
+      "passing": 0.36917,
+      "pressing": 0.79487,
+      "marking": 0.9277,
+      "countering": 0.50837,
+      "fitness": 0.71329
+    },
+    {
+      "finishing": 0.88055,
+      "progression": 0.95632,
+      "passing": 0.47174,
+      "pressing": 0.82971,
+      "marking": 0.98,
+      "countering": 0.57108,
+      "fitness": 0.716
+    },
+    {
+      "finishing": 0.75058,
+      "progression": 0.979,
+      "passing": 0.48156,
+      "pressing": 0.98,
+      "marking": 0.93424,
+      "countering": 0.56449,
+      "fitness": 0.71847
+    },
+    {
+      "finishing": 0.70828,
+      "progression": 0.97346,
+      "passing": 0.53418,
+      "pressing": 0.90632,
+      "marking": 0.91956,
+      "countering": 0.59565,
+      "fitness": 0.72079
+    },
+    {
+      "finishing": 0.91197,
+      "progression": 0.97026,
+      "passing": 0.39365,
+      "pressing": 0.91108,
+      "marking": 0.88796,
+      "countering": 0.52641,
+      "fitness": 0.7219
+    },
+    {
+      "finishing": 0.91608,
+      "progression": 0.9587,
+      "passing": 0.52257,
+      "pressing": 0.94403,
+      "marking": 0.92164,
+      "countering": 0.60431,
+      "fitness": 0.72351
+    },
+    {
+      "finishing": 0.87879,
+      "progression": 0.94268,
+      "passing": 0.40087,
+      "pressing": 0.97159,
+      "marking": 0.85833,
+      "countering": 0.57124,
+      "fitness": 0.72558
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.96216,
+      "passing": 0.54035,
+      "pressing": 0.84375,
+      "marking": 0.70778,
+      "countering": 0.82263,
+      "fitness": 0.72749
+    },
+    {
+      "finishing": 0.95913,
+      "progression": 0.96358,
+      "passing": 0.47937,
+      "pressing": 0.98,
+      "marking": 0.9247,
+      "countering": 0.63378,
+      "fitness": 0.72992
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.96996,
+      "passing": 0.44488,
+      "pressing": 0.91973,
+      "marking": 0.92552,
+      "countering": 0.55517,
+      "fitness": 0.732
+    },
+    {
+      "finishing": 0.92815,
+      "progression": 0.96549,
+      "passing": 0.51644,
+      "pressing": 0.957,
+      "marking": 0.96827,
+      "countering": 0.73201,
+      "fitness": 0.73305
+    },
+    {
+      "finishing": 0.92826,
+      "progression": 0.97817,
+      "passing": 0.42439,
+      "pressing": 0.88225,
+      "marking": 0.85434,
+      "countering": 0.53506,
+      "fitness": 0.73616
+    },
+    {
+      "finishing": 0.93932,
+      "progression": 0.95641,
+      "passing": 0.56736,
+      "pressing": 0.95468,
+      "marking": 0.98,
+      "countering": 0.5452,
+      "fitness": 0.73884
+    },
+    {
+      "finishing": 0.80272,
+      "progression": 0.87637,
+      "passing": 0.44634,
+      "pressing": 0.85578,
+      "marking": 0.62523,
+      "countering": 0.61782,
+      "fitness": 0.74054
+    },
+    {
+      "finishing": 0.89377,
+      "progression": 0.97999,
+      "passing": 0.41872,
+      "pressing": 0.83765,
+      "marking": 0.98,
+      "countering": 0.65629,
+      "fitness": 0.74324
+    },
+    {
+      "finishing": 0.91466,
+      "progression": 0.97598,
+      "passing": 0.51304,
+      "pressing": 0.81888,
+      "marking": 0.85434,
+      "countering": 0.46905,
+      "fitness": 0.74495
+    },
+    {
+      "finishing": 0.76775,
+      "progression": 0.97176,
+      "passing": 0.56066,
+      "pressing": 0.89434,
+      "marking": 0.96251,
+      "countering": 0.63336,
+      "fitness": 0.7471
+    },
+    {
+      "finishing": 0.63463,
+      "progression": 0.96146,
+      "passing": 0.30353,
+      "pressing": 0.7938,
+      "marking": 0.88469,
+      "countering": 0.53541,
+      "fitness": 0.75103
+    },
+    {
+      "finishing": 0.94985,
+      "progression": 0.97305,
+      "passing": 0.44387,
+      "pressing": 0.93006,
+      "marking": 0.94757,
+      "countering": 0.72744,
+      "fitness": 0.75399
+    },
+    {
+      "finishing": 0.94072,
+      "progression": 0.96252,
+      "passing": 0.52559,
+      "pressing": 0.79905,
+      "marking": 0.9009,
+      "countering": 0.56972,
+      "fitness": 0.75676
+    },
+    {
+      "finishing": 0.87311,
+      "progression": 0.9663,
+      "passing": 0.42079,
+      "pressing": 0.98,
+      "marking": 0.9479,
+      "countering": 0.71833,
+      "fitness": 0.75925
+    },
+    {
+      "finishing": 0.90522,
+      "progression": 0.98,
+      "passing": 0.45448,
+      "pressing": 0.86556,
+      "marking": 0.95999,
+      "countering": 0.4534,
+      "fitness": 0.763
+    },
+    {
+      "finishing": 0.91851,
+      "progression": 0.98,
+      "passing": 0.48319,
+      "pressing": 0.94078,
+      "marking": 0.95033,
+      "countering": 0.65798,
+      "fitness": 0.76622
+    },
+    {
+      "finishing": 0.93814,
+      "progression": 0.95949,
+      "passing": 0.452,
+      "pressing": 0.93577,
+      "marking": 0.97219,
+      "countering": 0.52257,
+      "fitness": 0.76913
+    },
+    {
+      "finishing": 0.89111,
+      "progression": 0.97502,
+      "passing": 0.44993,
+      "pressing": 0.945,
+      "marking": 0.89793,
+      "countering": 0.51833,
+      "fitness": 0.77249
+    },
+    {
+      "finishing": 0.92502,
+      "progression": 0.95586,
+      "passing": 0.45342,
+      "pressing": 0.98,
+      "marking": 0.89364,
+      "countering": 0.40214,
+      "fitness": 0.77606
+    },
+    {
+      "finishing": 0.82259,
+      "progression": 0.98,
+      "passing": 0.45072,
+      "pressing": 0.98,
+      "marking": 0.97749,
+      "countering": 0.71343,
+      "fitness": 0.7789
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.97793,
+      "passing": 0.41981,
+      "pressing": 0.77618,
+      "marking": 0.85917,
+      "countering": 0.64575,
+      "fitness": 0.78192
+    },
+    {
+      "finishing": 0.90771,
+      "progression": 0.96084,
+      "passing": 0.48209,
+      "pressing": 0.92638,
+      "marking": 0.92686,
+      "countering": 0.55804,
+      "fitness": 0.78693
+    },
+    {
+      "finishing": 0.93616,
+      "progression": 0.9466,
+      "passing": 0.52825,
+      "pressing": 0.85973,
+      "marking": 0.87849,
+      "countering": 0.52557,
+      "fitness": 0.79098
+    },
+    {
+      "finishing": 0.95513,
+      "progression": 0.96404,
+      "passing": 0.38024,
+      "pressing": 0.94772,
+      "marking": 0.92986,
+      "countering": 0.8496,
+      "fitness": 0.7972
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.97157,
+      "passing": 0.11944,
+      "pressing": 0.91107,
+      "marking": 0.8718,
+      "countering": 0.74601,
+      "fitness": 0.80324
+    },
+    {
+      "finishing": 0.98,
+      "progression": 0.98,
+      "passing": 0.28088,
+      "pressing": 0.81052,
+      "marking": 0.72716,
+      "countering": 0.92327,
+      "fitness": 0.80819
+    },
+    {
+      "finishing": 0.94073,
+      "progression": 0.98,
+      "passing": 0.39559,
+      "pressing": 0.91949,
+      "marking": 0.92142,
+      "countering": 0.48282,
+      "fitness": 0.81405
+    },
+    {
+      "finishing": 0.91411,
+      "progression": 0.9774,
+      "passing": 0.5433,
+      "pressing": 0.91694,
+      "marking": 0.8917,
+      "countering": 0.55266,
+      "fitness": 0.82145
+    },
+    {
+      "finishing": 0.89992,
+      "progression": 0.98,
+      "passing": 0.29399,
+      "pressing": 0.97256,
+      "marking": 0.98,
+      "countering": 0.98,
+      "fitness": 0.82797
+    },
+    {
+      "finishing": 0.89087,
+      "progression": 0.96938,
+      "passing": 0.383,
+      "pressing": 0.78128,
+      "marking": 0.92541,
+      "countering": 0.57379,
+      "fitness": 0.83596
+    },
+    {
+      "finishing": 0.82152,
+      "progression": 0.93136,
+      "passing": 0.38542,
+      "pressing": 0.83676,
+      "marking": 0.92702,
+      "countering": 0.36559,
+      "fitness": 0.84491
+    },
+    {
+      "finishing": 0.88727,
+      "progression": 0.96451,
+      "passing": 0.23653,
+      "pressing": 0.98,
+      "marking": 0.96772,
+      "countering": 0.79175,
+      "fitness": 0.85499
+    },
+    {
+      "finishing": 0.97743,
+      "progression": 0.97628,
+      "passing": 0.63674,
+      "pressing": 0.7496,
+      "marking": 0.86683,
+      "countering": 0.32306,
+      "fitness": 0.86857
+    },
+    {
+      "finishing": 0.95143,
+      "progression": 0.97071,
+      "passing": 0.47831,
+      "pressing": 0.94353,
+      "marking": 0.93274,
+      "countering": 0.50059,
+      "fitness": 0.88717
+    },
+    {
+      "finishing": 0.82713,
+      "progression": 0.97567,
+      "passing": 0.53492,
+      "pressing": 0.77582,
+      "marking": 0.94534,
+      "countering": 0.58501,
+      "fitness": 0.922
+    },
+    {
+      "finishing": 0.88055,
+      "progression": 0.95632,
+      "passing": 0.47174,
+      "pressing": 0.82971,
+      "marking": 0.98,
+      "countering": 0.57108,
+      "fitness": 1
+    }
+  ]
+}

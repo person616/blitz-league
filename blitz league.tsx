@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import realMatchPolicy from "./real-match-policy.json";
+import evolvedAiFile from "./evolved-ai-ladder.json";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
@@ -793,6 +794,146 @@ const realMatchActionProbabilities = (
     shot: exponentials[2] / total,
   };
 };
+type AiActionOption =
+  | { kind: "shoot"; value: number }
+  | { kind: "pass"; value: number; receiver: Token }
+  | { kind: "carry"; value: number; move: { x: number; y: number } };
+
+const nearestOpponentGap = (tokens: Token[], point: { x: number; y: number }, side: "home" | "away") => {
+  const gaps = tokens.filter((token) => token.side !== side).map((token) => distance(token, point));
+  return gaps.length ? Math.min(...gaps) : 99;
+};
+
+const attackingActionOptions = (
+  owner: Token,
+  tokens: Token[],
+  match: Match,
+  strategy: AiStrategy,
+): AiActionOption[] => {
+  const goalDistance = ownGoalDistance(owner, match.half);
+  const learned = realMatchActionProbabilities(owner, tokens, match, goalDistance);
+  const teammates = tokens.filter((token) => token.side === owner.side && token.player.id !== owner.player.id);
+  const pressureGap = nearestOpponentGap(tokens, owner, owner.side);
+  const ownScore = match.score[owner.side === "home" ? 0 : 1];
+  const opponentScore = match.score[owner.side === "home" ? 1 : 0];
+  const difference = ownScore - opponentScore;
+  const late = cap((match.minute - 55) / 35, 0, 1);
+  const urgency = difference < 0 ? late : difference > 0 ? -late * 0.45 : late * 0.25;
+  const options: AiActionOption[] = [];
+
+  if (goalDistance <= shotRange(owner.player)) {
+    const chance = shotAccuracy(owner, tokens, goalDistance, shotAngleDegrees(owner, match.half));
+    const goal = { x: match.half === 1 ? 0 : 21, y: 5 };
+    const interceptor = findInterceptor(tokens, owner.side, lineCells(owner, goal));
+    const blockRisk = interceptor ? interceptionChance(interceptor.token, "shot", interceptor.gap) : 0;
+    const conversion = (chance / 100) * (1 - blockRisk / 100);
+    const closeRange = goalDistance <= 2 ? 0.18 : goalDistance <= 4 ? 0.06 : 0;
+    options.push({
+      kind: "shoot",
+      value: conversion * (1.05 + strategy.finishing * 0.65 + urgency * 0.25)
+        + closeRange - (1 - conversion) * 0.07 + learned.shot * 0.10,
+    });
+  }
+
+  for (const receiver of teammates) {
+    const gap = distance(owner, receiver);
+    if (gap === 0 || gap > passingRange(owner.player)) continue;
+    const interceptor = findInterceptor(tokens, owner.side, lineCells(owner, receiver).slice(0, -1));
+    const blockRisk = interceptor ? interceptionChance(interceptor.token, "pass", interceptor.gap) : 0;
+    const success = 1 - blockRisk / 100;
+    const progress = goalDistance - ownGoalDistance(receiver, match.half);
+    const receiverGap = nearestOpponentGap(tokens, receiver, receiver.side);
+    const receiverGoalDistance = ownGoalDistance(receiver, match.half);
+    const receiverShot = receiverGoalDistance <= shotRange(receiver.player)
+      ? shotAccuracy(receiver, tokens, receiverGoalDistance, shotAngleDegrees(receiver, match.half)) / 100
+      : 0;
+    const support = teammates.filter((mate) => mate.player.id !== receiver.player.id
+      && distance(mate, receiver) <= passingRange(receiver.player)).length;
+    const safeOutlet = pressureGap <= 2 && progress <= 1 ? 0.10 : 0;
+    const value = success * (0.055 + progress * 0.012 + receiverShot * 0.52
+      + Math.min(receiverGap, 5) * 0.017 + support * 0.006 + safeOutlet)
+      - (1 - success) * (0.16 + (1 - Math.min(receiverGap, 6) / 6) * 0.10);
+    options.push({
+      kind: "pass",
+      receiver,
+      value: value * (0.55 + strategy.passing * 0.70 + strategy.progression * 0.18)
+        + learned.pass * 0.08 + urgency * Math.max(0, progress) * 0.004,
+    });
+  }
+
+  const moveDistance = 2 + movementBonus(owner.player);
+  const carryMove = findBestReachableMove(tokens, owner, moveDistance, (point) => {
+    const advance = goalDistance - ownGoalDistance({ ...owner, x: point.x, y: point.y }, match.half);
+    const space = nearestOpponentGap(tokens, point, owner.side);
+    const laneGap = Math.min(99, ...lineCells(point, { x: match.half === 1 ? 0 : 21, y: 5 })
+      .map((lanePoint) => nearestOpponentGap(tokens, lanePoint, owner.side)));
+    return advance * 0.85 + Math.min(space, 6) * 0.30 + Math.min(laneGap, 6) * 0.10
+      - Math.abs(point.y - 5) * 0.11;
+  });
+  if (carryMove) {
+    const projected = { ...owner, x: carryMove.x, y: carryMove.y };
+    const advance = goalDistance - ownGoalDistance(projected, match.half);
+    const space = nearestOpponentGap(tokens, carryMove, owner.side);
+    const retention = cap(0.48 + strategy.progression * 0.42
+      - (space <= 1 ? 0.24 : space <= 2 ? 0.10 : 0), 0.18, 0.95);
+    const shotEntry = ownGoalDistance(projected, match.half) <= shotRange(owner.player);
+    const value = retention * (0.045 + advance * 0.016 + Math.min(space, 5) * 0.018 + (shotEntry ? 0.11 : 0))
+      - (1 - retention) * 0.17;
+    options.push({
+      kind: "carry",
+      move: carryMove,
+      value: value * (0.62 + strategy.progression * 0.65) + learned.carry * 0.06
+        + urgency * Math.max(0, advance) * 0.004,
+    });
+  }
+
+  return options;
+};
+
+const pickAttackingAction = (options: AiActionOption[], difficulty: number) => {
+  if (!options.length) return undefined;
+  const temperature = 0.03 + (1 - cap(difficulty, 1, 100) / 100) * 0.30;
+  return [...options].map((option) => ({
+    option,
+    score: option.value + (Math.random() - 0.5) * temperature,
+  })).sort((a, b) => b.score - a.score)[0].option;
+};
+
+type DefensiveMove = { defender: Token; move: { x: number; y: number; score: number }; score: number };
+
+const defensiveMoveOptions = (
+  tokens: Token[],
+  carrier: Token,
+  strategy: AiStrategy,
+  half: 1 | 2,
+): DefensiveMove[] => {
+  const goalX = carrier.side === "home" ? (half === 1 ? 0 : 21) : (half === 1 ? 21 : 0);
+  const lane = lineCells(carrier, { x: goalX, y: 5 });
+  const threats = tokens.filter((token) => token.side === carrier.side && token.player.id !== carrier.player.id);
+  return tokens.filter((token) => token.side !== carrier.side && token.player.position !== "GK")
+    .map((defender) => {
+      const pressureDistance = distance(defender, carrier) <= 3 || strategy.pressing > 0.65 ? 1 : 2;
+      const moveDistance = 2 + movementBonus(defender.player);
+      const move = findBestReachableMove(tokens, defender, moveDistance, (point) => {
+        const carrierGap = Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y));
+        const laneGap = lane.length ? Math.min(...lane.map((lanePoint) => distance(point, lanePoint))) : 99;
+        const goalSide = (point.x - carrier.x) * (goalX - carrier.x) >= 0 ? 1 : 0;
+        const receiverGap = threats.length
+          ? Math.min(...threats.map((threat) => distance(point, threat)))
+          : 99;
+        const role = defender.player.position === "DEF" ? 1 : defender.player.position === "MID" ? 0.55 : 0.2;
+        return -Math.abs(carrierGap - pressureDistance) * 4.2
+          - laneGap * (0.55 + strategy.marking * 0.9)
+          + goalSide * strategy.marking * 3.4
+          + Math.min(receiverGap, 6) * (0.10 + strategy.pressing * 0.10)
+          + role * strategy.marking * 1.4;
+      });
+      return move ? { defender, move, score: move.score } : undefined;
+    })
+    .filter((option): option is DefensiveMove => !!option)
+    .sort((a, b) => b.score - a.score);
+};
+
 const campaignStageCount = 105;
 const campaignStageNames = [
   "Season Opener", "Rivalry Match", "Road Test", "Cup Qualifier", "Playoff Push",
@@ -813,7 +954,22 @@ campaignStageNames.push(...Array.from({ length: 50 }, (_, index) =>
 ));
 type AiStrategy = { finishing: number; progression: number; passing: number; pressing: number; marking: number; countering: number; fitness: number };
 type HumanPlayStyle = { shots: number; passes: number; carries: number; nutmegs: number };
-const AI_POLICY_SEARCH_SIZE = 200_000;
+type EvolvedAiArtifact = {
+  version: number;
+  method: string;
+  generations: number;
+  population: number;
+  matchesSimulated: number;
+  trainingOpponents: number;
+  validationOpponents: number;
+  training: { bestFitness: number; bestWinRate: number; bestGoalDifference: number };
+  validation: { sampleSize: number; winRate: number; drawRate: number; goalDifference: number; fitness: number };
+  champion: AiStrategy;
+  ladder: AiStrategy[];
+};
+const evolvedAi = evolvedAiFile as EvolvedAiArtifact;
+// Fallback ladder keeps the game playable if the evolved artifact is replaced
+// with an older or partial file. `npm run train:ai` regenerates the real one.
 const aiStrategyBenchmarks = [
   { shot: 0.9, progress: 0.3, pass: 0.4, press: 0.7, mark: 0.6, counter: 0.7 },
   { shot: 0.6, progress: 0.8, pass: 0.8, press: 0.6, mark: 0.8, counter: 0.5 },
@@ -824,43 +980,113 @@ const aiStrategyBenchmarks = [
   { shot: 0.3, progress: 0.9, pass: 0.8, press: 0.8, mark: 0.8, counter: 0.8 },
   { shot: 0.9, progress: 0.7, pass: 0.4, press: 0.6, mark: 0.7, counter: 0.8 },
 ];
-const searchAiStrategies = (): AiStrategy[] => {
-  let seed = 0x6d2b79f5;
-  const random = () => {
-    seed = Math.imul(seed ^ (seed >>> 15), seed | 1);
-    seed ^= seed + Math.imul(seed ^ (seed >>> 7), seed | 61);
-    return ((seed ^ (seed >>> 14)) >>> 0) / 4294967296;
-  };
-  const strategies: AiStrategy[] = [];
-  for (let candidate = 0; candidate < AI_POLICY_SEARCH_SIZE; candidate += 1) {
-    const policy = {
-      finishing: random(),
-      progression: random(),
-      passing: random(),
-      pressing: random(),
-      marking: random(),
-      countering: random(),
-      fitness: 0,
+const buildFallbackAiLadder = (): AiStrategy[] => {
+  const genomes = aiStrategyBenchmarks.map((benchmark, index) => ({
+    finishing: benchmark.shot,
+    progression: benchmark.progress,
+    passing: benchmark.pass,
+    pressing: benchmark.press,
+    marking: benchmark.mark,
+    countering: benchmark.counter,
+    fitness: index / Math.max(1, aiStrategyBenchmarks.length - 1),
+  }));
+  return Array.from({ length: 100 }, (_, index) => {
+    const position = (index / 99) * (genomes.length - 1);
+    const lower = Math.floor(position);
+    const upper = Math.min(genomes.length - 1, Math.ceil(position));
+    const weight = position - lower;
+    const a = genomes[lower];
+    const b = genomes[upper];
+    const blendGene = (gene: keyof AiStrategy) => a[gene] * (1 - weight) + b[gene] * weight;
+    return {
+      finishing: blendGene("finishing"),
+      progression: blendGene("progression"),
+      passing: blendGene("passing"),
+      pressing: blendGene("pressing"),
+      marking: blendGene("marking"),
+      countering: blendGene("countering"),
+      fitness: index / 99,
     };
-    policy.fitness = aiStrategyBenchmarks.reduce((total, scenario) => {
-      const attack = policy.finishing * scenario.shot
-        + policy.progression * scenario.progress
-        + policy.passing * scenario.pass;
-      const defense = policy.pressing * scenario.press
-        + policy.marking * scenario.mark
-        + policy.countering * scenario.counter;
-      const overcommitment = Math.max(0, policy.pressing + policy.finishing - 1.55)
-        * Math.max(scenario.counter, scenario.pass) * 0.16;
-      const imbalance = Math.abs(attack - defense) * 0.06;
-      return total + attack * 0.54 + defense * 0.46 - overcommitment - imbalance;
-    }, 0) / aiStrategyBenchmarks.length;
-    strategies.push(policy);
-  }
-  return strategies.sort((a, b) => a.fitness - b.fitness);
+  });
 };
-const aiStrategyLadder = searchAiStrategies();
-const aiStrategyForLevel = (level: number) =>
-  aiStrategyLadder[Math.round((cap(level, 1, 100) - 1) * (aiStrategyLadder.length - 1) / 99)];
+const finiteGene = (value: number) => cap(Number.isFinite(value) ? value : 0.5, 0.05, 0.98);
+const clampStrategy = (strategy: AiStrategy): AiStrategy => ({
+  finishing: finiteGene(strategy.finishing),
+  progression: finiteGene(strategy.progression),
+  passing: finiteGene(strategy.passing),
+  pressing: finiteGene(strategy.pressing),
+  marking: finiteGene(strategy.marking),
+  countering: finiteGene(strategy.countering),
+  fitness: cap(Number.isFinite(strategy.fitness) ? strategy.fitness : 0, 0, 1),
+});
+
+// Difficulty is a strict ladder: level 1 is the weakest evolved genome and
+// level 100 is the validated champion. The artifact stores training order, so
+// sort again here and pin the champion to the top; this keeps scaling correct
+// even if an older artifact is loaded or two genomes have equal fitness.
+const buildEvolvedAiLadder = (): AiStrategy[] => {
+  if (evolvedAi.ladder.length < 100) return buildFallbackAiLadder();
+  const ranked = evolvedAi.ladder.map(clampStrategy).sort((a, b) => a.fitness - b.fitness);
+  ranked[ranked.length - 1] = clampStrategy(evolvedAi.champion);
+  return ranked.map((strategy, index) => ({
+    ...strategy,
+    fitness: index / Math.max(1, ranked.length - 1),
+  }));
+};
+const aiStrategyLadder: AiStrategy[] = buildEvolvedAiLadder();
+const aiStrategyForLevel = (level: number) => {
+  const progress = (cap(level, 1, 100) - 1) / 99;
+  if (progress <= 0) return aiStrategyLadder[0];
+  if (progress >= 1) return aiStrategyLadder[aiStrategyLadder.length - 1];
+  return aiStrategyLadder[Math.round(progress * (aiStrategyLadder.length - 1))];
+};
+
+// "Learn" step: the evolved genome is the CPU's starting game plan. During a
+// match it is nudged toward the opponent's persisted habits and the live
+// scoreline, so the same difficulty behaves differently against a passer, a
+// dribbler, or a shooter.
+const adaptAiStrategy = (
+  base: AiStrategy,
+  playStyle: HumanPlayStyle,
+  difficulty: number,
+  match?: Pick<Match, "score" | "minute" | "half">,
+): AiStrategy => {
+  const actions = playStyle.shots + playStyle.passes + playStyle.carries + playStyle.nutmegs;
+  const confidence = cap(actions / 30, 0, 1) * cap(difficulty / 40, 0.15, 1);
+  const total = Math.max(1, actions);
+  const passRate = playStyle.passes / total;
+  const shotRate = playStyle.shots / total;
+  const carryRate = (playStyle.carries + playStyle.nutmegs) / total;
+  const strategy: AiStrategy = { ...base };
+
+  strategy.pressing += confidence * (passRate * 0.10 + carryRate * 0.08);
+  strategy.marking += confidence * (shotRate * 0.12 + passRate * 0.05);
+  strategy.countering += confidence * (carryRate * 0.10 + (playStyle.nutmegs / total) * 0.05);
+  strategy.passing += confidence * (passRate * 0.05 - carryRate * 0.03);
+  strategy.progression += confidence * (carryRate * 0.05 - passRate * 0.02);
+
+  if (match) {
+    const difference = match.score[1] - match.score[0];
+    const late = cap((match.minute - 55) / 35, 0, 1);
+    if (difference < 0) {
+      strategy.finishing += late * 0.10;
+      strategy.progression += late * 0.08;
+      strategy.pressing += late * 0.05;
+      strategy.passing -= late * 0.04;
+    } else if (difference > 0) {
+      strategy.passing += late * 0.07;
+      strategy.marking += late * 0.06;
+      strategy.countering += late * 0.05;
+      strategy.finishing -= late * 0.04;
+    } else if (late > 0) {
+      strategy.finishing += late * 0.04;
+      strategy.countering += late * 0.03;
+    }
+  }
+
+  return clampStrategy(strategy);
+};
+
 const shiftFormationWithBall = (tokens: Token[], fromX: number, toX: number, carrierId: string, half: 1 | 2 = 1) => {
   const direction = Math.sign(toX - fromX);
   if (!direction) return tokens;
@@ -1522,7 +1748,7 @@ function App() {
 
   function startCpuQuickplay() {
     setPassMode(false);
-    const strategy = aiStrategyForLevel(aiDifficulty);
+    const strategy = adaptAiStrategy(aiStrategyForLevel(aiDifficulty), humanPlayStyle, aiDifficulty);
     const cpuLineup = chooseAiFormation(awayPlayers, strategy, humanPlayStyle);
     const initial = makeMatch(awayPlayers, aiDifficulty, activeFormat, homePlayers, activeFormation,
       formationAssignments[activeFormationId] ?? {}, cpuLineup.formation, cpuLineup.assignments);
@@ -1540,7 +1766,7 @@ function App() {
     const stageDifficulty = Math.min(100, nextLevel);
     const stageOpponentXI = aiOpponentRoster(stageDifficulty);
     const stageFormat = campaignFormatForStage(nextLevel);
-    const stageStrategy = aiStrategyForLevel(stageDifficulty);
+    const stageStrategy = adaptAiStrategy(aiStrategyForLevel(stageDifficulty), humanPlayStyle, stageDifficulty);
     const stageLineup = chooseAiFormation(stageOpponentXI, stageStrategy, humanPlayStyle);
     setMatch(makeMatch(stageOpponentXI, nextLevel, stageFormat, homePlayers, activeFormation,
       formationAssignments[activeFormationId] ?? {}, stageLineup.formation, stageLineup.assignments));
@@ -1606,11 +1832,9 @@ function App() {
     if (quickplaySide !== null || latest.turn !== "away" || latest.finished) return;
     const ai = { ...latest, tokens: latest.tokens.map((t) => ({ ...t })) };
     const aiDifficultyLevel = cap(latest.campaignStage, 1, 100);
-    const strategy = aiStrategyForLevel(aiDifficultyLevel);
+    const strategy = adaptAiStrategy(aiStrategyForLevel(aiDifficultyLevel), humanPlayStyle, aiDifficultyLevel, ai);
     const playCount = Math.max(1, humanPlayStyle.shots + humanPlayStyle.passes
       + humanPlayStyle.carries + humanPlayStyle.nutmegs);
-    const passTendency = humanPlayStyle.passes / playCount;
-    const shotTendency = humanPlayStyle.shots / playCount;
     const nutmegTendency = humanPlayStyle.nutmegs / playCount;
     const expireHomeStealProtection = ai.stealProtectedSide === "home";
     const originalAwayPositions = new Map(ai.tokens.filter((token) => token.side === "away")
@@ -1643,33 +1867,11 @@ function App() {
       }
     } else if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
-      const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
-      const learnedActions = realMatchActionProbabilities(owner, ai.tokens, ai, goalDistance);
-      const receiver = ai.tokens.filter((token) => token.side === "away" && token.player.id !== owner.player.id
-        && distance(owner, token) <= passingRange(owner.player)
-        && ownGoalDistance(token, latest.half) < goalDistance)
-        .sort((a, b) => ownGoalDistance(a, latest.half) - distance(a, owner)
-          - (ownGoalDistance(b, latest.half) - distance(b, owner)))[0];
-      const passInterceptor = receiver
-        ? findInterceptor(ai.tokens, "away", lineCells(owner, receiver).slice(0, -1))
-        : undefined;
-      const learnedPassShare = learnedActions.pass / Math.max(0.001, learnedActions.pass + learnedActions.carry);
-      const learnedShotThreshold = cap(
-        24 + (1 - strategy.finishing) * 28 - (learnedActions.shot - 0.1) * 35,
-        18,
-        62,
-      );
-      const choosePass = !!receiver && !passInterceptor
-        && (goalDistance > shotRange(owner.player) || chance < 48)
-        && Math.random() < strategy.passing * (0.25 + passTendency * 0.6)
-          * (0.75 + learnedPassShare * 0.5);
-      if (choosePass && receiver) {
-        ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
-        const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
-        if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
-        ai.message = `The opposition finds ${receiver.player.name} in space with a weighted pass.`;
-      } else if (goalDistance <= shotRange(owner.player)
-        && (goalDistance <= 2 || chance >= learnedShotThreshold)) {
+      const options = attackingActionOptions(owner, ai.tokens, ai, strategy);
+      const action = pickAttackingAction(options, aiDifficultyLevel);
+
+      if (action?.kind === "shoot") {
+        const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
         const goal = { x: latest.half === 1 ? 0 : 21, y: 5 };
         const interception = findInterceptor(ai.tokens, "away", lineCells(owner, goal));
         if (interception && Math.random() * 100 < interceptionChance(interception.token, "shot", interception.gap)) {
@@ -1709,20 +1911,24 @@ function App() {
           ai.stealProtectedSide = undefined;
           ai.message = `The opposition's shot from ${goalDistance} tiles out goes wide. The ball is loose by your goal.`;
         }
+      } else if (action?.kind === "pass") {
+        const receiver = action.receiver;
+        const passGap = distance(owner, receiver);
+        const interceptor = findInterceptor(ai.tokens, "away", lineCells(owner, receiver).slice(0, -1));
+        if (interceptor && Math.random() * 100 < interceptionChance(interceptor.token, "pass", interceptor.gap)) {
+          ai.ball = { x: interceptor.token.x, y: interceptor.token.y };
+          ai.stealProtectedSide = undefined;
+          ai.message = `${interceptor.token.player.name} reads the opposition pass and intercepts it!`;
+        } else {
+          ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
+          const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
+          if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
+          ai.message = passGap >= 4
+            ? `The opposition switches play and finds ${receiver.player.name} with a long weighted pass.`
+            : `The opposition finds ${receiver.player.name} in space with a weighted pass.`;
+        }
       } else {
-        const attackDirection = latest.half === 1 ? -1 : 1;
-        const approachX = attackDirection < 0 ? 1 : 20;
-        const route = findRouteToTargets(ai.tokens, owner, Array.from({ length: 7 }, (_, index) => ({
-          x: approachX,
-          y: index + 2,
-        })));
-        const moveDistance = 2 + movementBonus(owner.player);
-        const next = route[Math.min(moveDistance, route.length) - 1]
-          ?? findBestReachableMove(ai.tokens, owner, moveDistance, (point) =>
-            -ownGoalDistance({ ...owner, x: point.x, y: point.y }, ai.half) * 3
-              - Math.abs(point.y - 5) * 0.3
-              - ai.tokens.filter((token) => token.side === "home")
-                .reduce((nearest, defender) => Math.min(nearest, distance(point, defender)), 99) * 0.1);
+        const next = action?.kind === "carry" ? action.move : undefined;
         if (next) {
           const previousBallX = ai.ball.x;
           owner.x = next.x;
@@ -1731,38 +1937,25 @@ function App() {
           if (ai.stealProtectedSide === "away") ai.stealProtectedSide = undefined;
           ai.tokens = shiftFormationWithBall(ai.tokens, previousBallX, next.x, owner.player.id, ai.half);
         }
-        ai.message = "The opposition advances. Your turn.";
+        ai.message = next
+          ? `The opposition's ${owner.player.name} carries into space and keeps the attack moving.`
+          : "The opposition shields the ball. Your turn.";
       }
     } else {
       const carrier = ai.tokens.find((t) => t.x === ai.ball.x && t.y === ai.ball.y);
       if (carrier?.side === "home") {
-        const pressers = ai.tokens.filter((t) => t.side === "away" && t.player.position !== "GK")
-          .sort((a, b) => {
-            const highPress = ownGoalDistance(carrier, ai.half) > 8;
-            const roleFit = (presser: Token) => highPress
-              ? presser.player.position === "FWD" ? 0 : presser.player.position === "MID" ? 1 : presser.player.position === "DEF" ? 3 : 20
-              : presser.player.position === "DEF" ? 0 : presser.player.position === "MID" ? 2 : presser.player.position === "FWD" ? 4 : 20;
-            const receiverThreat = (presser: Token) => ai.tokens
-              .filter((token) => token.side === "home" && token.player.id !== carrier.player.id)
-              .reduce((best, teammate) => Math.min(best, distance(presser, teammate)), 99);
-            const aThreat = receiverThreat(a);
-            const bThreat = receiverThreat(b);
-            const homeGoalX = ai.half === 1 ? 0 : 21;
-            const aLane = Math.abs(a.x - homeGoalX) + Math.abs(a.y - carrier.y);
-            const bLane = Math.abs(b.x - homeGoalX) + Math.abs(b.y - carrier.y);
-            const aClose = adjacent(a, carrier) ? -3 : 0;
-            const bClose = adjacent(b, carrier) ? -3 : 0;
-            return distance(a, carrier) - distance(b, carrier) + (aClose - bClose) * 3
-              + (roleFit(a) - roleFit(b)) * (0.6 + strategy.marking)
-              - (passTendency * strategy.marking * (bThreat - aThreat) * 0.45)
-              - (shotTendency * strategy.marking * (bLane - aLane) * 0.25);
-          });
-        const presser = pressers[0];
+        const defensiveOptions = defensiveMoveOptions(ai.tokens, carrier, strategy, ai.half);
+        const adjacentDefenders = ai.tokens.filter((token) => token.side === "away"
+          && token.player.position !== "GK" && adjacent(token, carrier))
+          .sort((a, b) => stealChanceFor(b, carrier, ai.half) - stealChanceFor(a, carrier, ai.half));
+        const presser = adjacentDefenders[0] ?? defensiveOptions[0]?.defender;
         if (presser && adjacent(presser, carrier)) {
           if (ai.stealProtectedSide === "home") {
             ai.message = "Your team keeps possession after the recent steal; the opposition cannot steal back immediately.";
           } else {
-            const chance = stealChanceFor(presser, carrier, ai.half);
+            const help = adjacentDefenders.filter((token) => token.player.id !== presser.player.id).length;
+            const chance = cap(stealChanceFor(presser, carrier, ai.half)
+              + help * 3.5 + strategy.pressing * 3, 15, 78);
             if (Math.random() * 100 < chance) {
               const landing = stealLanding(ai.tokens, presser, carrier, ai.half);
               ai.tokens = ai.tokens.map((token) => token.player.id === presser.player.id
@@ -1773,36 +1966,18 @@ function App() {
               const shiftedPresser = ai.tokens.find((token) => token.player.id === presser.player.id);
               if (shiftedPresser) ai.ball = { x: shiftedPresser.x, y: shiftedPresser.y };
               ai.stealProtectedSide = "away";
-              ai.message = `${presser.player.name} steals the ball and gets in front of ${carrier.player.name} (${chance}% chance). The opposition team pushes upfield.`;
+              ai.message = `${presser.player.name} steals the ball with ${help + 1}-player pressure and gets in front of ${carrier.player.name} (${chance}% chance). The opposition team pushes upfield.`;
             } else {
-              ai.message = `${carrier.player.name} evades the opposition's steal attempt (${chance}% chance).`;
+              ai.message = `${carrier.player.name} evades the opposition's ${help + 1}-player press (${chance}% chance).`;
             }
           }
-        } else if (presser) {
-          const pressureDistance = distance(presser, carrier) <= 3 || strategy.pressing > 0.65 ? 1 : 2;
-          const pressureTargets = Array.from({ length: 11 }, (_, y) =>
-            Array.from({ length: 22 }, (_, x) => ({ x, y })),
-          ).flat().filter((point) => Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y)) === pressureDistance);
-          const route = findRouteToTargets(ai.tokens, presser, pressureTargets);
-          const moveDistance = 2 + movementBonus(presser.player);
-          const next = route[Math.min(moveDistance, route.length) - 1]
-            ?? findBestReachableMove(ai.tokens, presser, moveDistance, (point) => {
-              const goalX = ai.half === 1 ? 0 : 21;
-              const pathToGoal = lineCells(carrier, { x: goalX, y: 5 });
-              const laneGap = Math.min(...pathToGoal.map((pathPoint) =>
-                Math.abs(point.x - pathPoint.x) + Math.abs(point.y - pathPoint.y)));
-              const carrierGap = Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y));
-              const goalSide = (point.x - carrier.x) * (goalX - carrier.x) >= 0 ? 1 : 0;
-              return -Math.abs(carrierGap - pressureDistance) * 4
-                - laneGap * (0.6 + strategy.marking)
-                + goalSide * strategy.marking * 3
-                + (presser.player.position === "DEF" ? strategy.marking * 1.5 : 0);
-            });
-          if (next) {
-            presser.x = next.x;
-            presser.y = next.y;
-          }
-          ai.message = "The opposition presses your ball carrier.";
+        } else if (defensiveOptions.length) {
+          const { defender, move } = defensiveOptions[0];
+          defender.x = move.x;
+          defender.y = move.y;
+          ai.message = strategy.pressing > 0.72
+            ? "The opposition swarms your ball carrier and cuts off the next pass."
+            : "The opposition drops into a compact block and marks your passing options.";
         } else {
           ai.message = "The opposition holds shape. Your turn.";
         }
@@ -1834,7 +2009,26 @@ function App() {
             ai.message = "The ball is loose. Your team has the better chance to reach it next turn.";
           }
         } else {
-          ai.message = "The ball is loose. Your team has the better chance to reach it next turn.";
+          const cover = ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK")
+            .map((defender) => ({
+              defender,
+              move: findBestReachableMove(ai.tokens, defender, 2 + movementBonus(defender.player), (point) =>
+                -distance(point, ai.ball) * 0.55
+                  - Math.abs(point.y - 5) * 0.9
+                  - ai.tokens.filter((token) => token.side === "home")
+                    .reduce((nearest, threat) => Math.min(nearest, distance(point, threat)), 99) * 0.06),
+            }))
+            .filter((candidate): candidate is typeof candidate & {
+              move: NonNullable<typeof candidate.move>;
+            } => !!candidate.move)
+            .sort((a, b) => b.move.score - a.move.score)[0];
+          if (cover) {
+            cover.defender.x = cover.move.x;
+            cover.defender.y = cover.move.y;
+            ai.message = "The opposition drops a defender into the central lane to protect against the loose ball.";
+          } else {
+            ai.message = "The ball is loose. Your team has the better chance to reach it next turn.";
+          }
         }
       }
     }
@@ -2435,7 +2629,7 @@ function App() {
         .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
-        .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}
+        .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}.ai-evolution-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.ai-evolution-stats span{background:#ffffff05;border:1px solid #ffffff10;border-radius:9px;padding:9px 10px}.ai-evolution-stats strong{display:block;font:700 13px 'DM Mono',monospace;color:#d7f583}.ai-evolution-stats small{display:block;margin-top:3px;color:#8e998f;font:8px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:520px){.ai-evolution-stats{grid-template-columns:1fr 1fr}}
         .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#b8f36b;font-size:10px}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
@@ -2767,12 +2961,18 @@ function App() {
           </button>
         </article>)}</div>
         <section className="settings-card ai-difficulty">
-          <div className="panel-heading"><h2>CPU difficulty · Level {aiDifficulty}</h2><span>100 strategic levels</span></div>
-          <p className="small-note" style={{ lineHeight: 1.7, margin: 0 }}>Choose any CPU level for Quickplay. The level ladder ranks the weakest policy at 1 and the strongest at 100; higher levels also field stronger MLS players and evaluate every formation, including custom ones.</p>
+          <div className="panel-heading"><h2>CPU difficulty · Level {aiDifficulty}</h2><span>{evolvedAi.generations} generations · {evolvedAi.population} genomes</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7, margin: 0 }}>Each level is a genome from a teach → breed → mutate genetic algorithm. Level 1 is the weakest evolved strategy; level 100 is the validated champion. Higher levels also field stronger MLS players and evaluate every formation, including custom ones.</p>
           <input aria-label="CPU AI difficulty" type="range" min="1" max="100" step="1" value={aiDifficulty}
             onChange={(event) => setAiDifficulty(Number(event.target.value))} />
           <div className="ai-difficulty-scale"><span>1 · WEAKEST STRATEGY</span><span>100 · TOP STRATEGY</span></div>
-          <p className="ai-difficulty-note">The CPU combines tactical defense and local opponent adaptation with a pass/carry/shot model trained on {realMatchPolicy.matchesWithEvents.toLocaleString()} real match event files. Higher levels field stronger players and use the trained action preferences more consistently. The model is trained and validated from separate matches; its defensive positioning remains rule-based.</p>
+          <div className="ai-evolution-stats">
+            <span><strong>{evolvedAi.matchesSimulated.toLocaleString()}</strong><small>matches evolved</small></span>
+            <span><strong>{(evolvedAi.validation.winRate * 100).toFixed(0)}%</strong><small>validation wins</small></span>
+            <span><strong>{evolvedAi.validation.goalDifference.toFixed(2)}</strong><small>goal difference</small></span>
+            <span><strong>{humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs}</strong><small>actions learned</small></span>
+          </div>
+          <p className="ai-difficulty-note">The CPU teaches a population from real StatsBomb action preferences and tactical archetypes, breeds the fittest genomes, and mutates the next generation. Its evolved genes drive passing, carrying, shooting, pressing, marking, and countering, while the live coach learns your shot, pass, carry, and nutmeg mix and adjusts its plan.</p>
           <p className="small-note" style={{ lineHeight: 1.7, margin: "10px 0 0" }}>
             <img src={`${import.meta.env.BASE_URL}statsbomb-icon.svg`} alt="StatsBomb" width="18" height="18"
               style={{ display: "inline-block", verticalAlign: "middle", marginRight: 6, borderRadius: 3 }} />

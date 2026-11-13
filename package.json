@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "server": "node server.mjs",
+    "train:ai": "node scripts/evolve-ai.mjs",
     "train:real-match-policy": "node scripts/train-real-match-policy.mjs"
   },
   "dependencies": {

@@ -31,6 +31,8 @@ type Player = {
   tacticalY?: number;
 };
 type Token = { player: Player; x: number; y: number; side: "home" | "away" };
+type LuckTrack = { successes: number; attempts: number };
+type MatchLuck = { home: LuckTrack; away: LuckTrack };
 export type Match = {
   format: FormatId;
   formationId: FormationId;
@@ -51,6 +53,7 @@ export type Match = {
   actionsUsed: number;
   bonusDrives: number;
   bonusActions: number;
+  luck: MatchLuck;
   finished?: boolean;
 };
 
@@ -440,6 +443,47 @@ const fmt = (id: FormatId) => formats.find((format) => format.id === id) ?? form
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }) =>
   Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const cap = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const emptyLuck = (): MatchLuck => ({
+  home: { successes: 0, attempts: 0 },
+  away: { successes: 0, attempts: 0 },
+});
+const LUCK_MIN_ATTEMPTS = 5;
+const LUCK_CONFIDENCE_SAMPLE = 15;
+const LUCK_CORRECTION_STRENGTH = 44;
+const luckRate = (track: LuckTrack) => track.attempts ? track.successes / track.attempts : 0.5;
+const luckBias = (track: LuckTrack) =>
+  (luckRate(track) - 0.5) * cap((track.attempts - LUCK_MIN_ATTEMPTS) / LUCK_CONFIDENCE_SAMPLE, 0, 1);
+// Soft regression to 50%: a side that has been lucky has its next success
+// chance reduced, while an unlucky side gets a boost. The pull grows with the
+// distance from 50%, but it never makes a result certain.
+const luckAdjustedChance = (
+  match: Match,
+  successSide: "home" | "away",
+  failureSide: "home" | "away",
+  chance: number,
+) => cap(chance + (luckBias(match.luck[failureSide]) * 0.5 - luckBias(match.luck[successSide]))
+  * LUCK_CORRECTION_STRENGTH, 3, 97);
+const rollLuck = (
+  match: Match,
+  successSide: "home" | "away",
+  failureSide: "home" | "away",
+  chance: number,
+) => {
+  const adjustedChance = luckAdjustedChance(match, successSide, failureSide, chance);
+  const success = Math.random() * 100 < adjustedChance;
+  const nextLuck: MatchLuck = { ...match.luck };
+  nextLuck[successSide] = {
+    successes: match.luck[successSide].successes + (success ? 1 : 0),
+    attempts: match.luck[successSide].attempts + 1,
+  };
+  nextLuck[failureSide] = {
+    successes: match.luck[failureSide].successes + (success ? 0 : 1),
+    attempts: match.luck[failureSide].attempts + 1,
+  };
+  return { success, chance: adjustedChance, match: { ...match, luck: nextLuck } };
+};
+const luckPercent = (track: LuckTrack) =>
+  track.attempts ? Math.round((track.successes / track.attempts) * 100) : 50;
 const abilityEffect = (player: Player, type: AbilityType) =>
   player.abilityType === type ? player.abilityStat - 50 : 0;
 const movementBonus = (player: Player) =>
@@ -494,32 +538,42 @@ const resolveGoalkeeperClearance = (match: Match, keeper: Token) => {
   const target = goalkeeperClearTarget(keeper, match.tokens, match.half);
   const clearDistance = distance(keeper, target);
   const accuracy = goalkeeperClearAccuracy(keeper.player, clearDistance);
+  const opponentSide = keeper.side === "home" ? "away" : "home";
   const interception = findInterceptor(match.tokens, keeper.side, lineCells(keeper, target));
-  if (interception && Math.random() * 100 < interceptionChance(interception.token, "pass", interception.gap)) {
-    return {
-      ...match,
-      ball: { x: interception.token.x, y: interception.token.y },
-      stealProtectedSide: undefined,
-      message: `${interception.token.player.name} intercepts ${keeper.player.name}'s clearance (${accuracy}% accuracy).`,
-    };
+  let luckState = match;
+  if (interception) {
+    const block = rollLuck(match, interception.token.side, keeper.side,
+      interceptionChance(interception.token, "pass", interception.gap));
+    luckState = block.match;
+    if (block.success) {
+      return {
+        ...luckState,
+        ball: { x: interception.token.x, y: interception.token.y },
+        stealProtectedSide: undefined,
+        message: `${interception.token.player.name} intercepts ${keeper.player.name}'s clearance.`,
+      };
+    }
   }
+  const clearance = rollLuck(luckState, keeper.side, opponentSide, accuracy);
+  luckState = clearance.match;
+  const resolvedAccuracy = Math.round(clearance.chance);
   let landing = target;
-  if (Math.random() * 100 >= accuracy) {
-    const missDistance = 1 + Math.floor(Math.random() * Math.max(1, Math.ceil((100 - accuracy) / 24)));
+  if (!clearance.success) {
+    const missDistance = 1 + Math.floor(Math.random() * Math.max(1, Math.ceil((100 - resolvedAccuracy) / 24)));
     const rowOffset = Math.floor(Math.random() * (missDistance * 2 + 1)) - missDistance;
     landing = {
       x: cap(target.x - attackDirection * missDistance, 1, 20),
       y: cap(target.y + rowOffset, 0, 10),
     };
   }
-  const collector = match.tokens.find((token) => token.x === landing.x && token.y === landing.y);
+  const collector = luckState.tokens.find((token) => token.x === landing.x && token.y === landing.y);
   return {
-    ...match,
+    ...luckState,
     ball: landing,
     stealProtectedSide: undefined,
     message: collector && collector.side !== keeper.side
-      ? `${collector.player.name} intercepts ${keeper.player.name}'s long clearance (${accuracy}% accuracy).`
-      : `${keeper.player.name} clears ${clearDistance} tiles upfield. The target was ${accuracy}% accurate; the ball lands at ${landing.x}, ${landing.y}.`,
+      ? `${collector.player.name} intercepts ${keeper.player.name}'s long clearance (${resolvedAccuracy}% accuracy).`
+      : `${keeper.player.name} clears ${clearDistance} tiles upfield. The target was ${resolvedAccuracy}% accurate; the ball lands at ${landing.x}, ${landing.y}.`,
   };
 };
 const defenderPenalty = (tokens: Token[], attacker: Token) => {
@@ -954,6 +1008,7 @@ campaignStageNames.push(...Array.from({ length: 50 }, (_, index) =>
 ));
 type AiStrategy = { finishing: number; progression: number; passing: number; pressing: number; marking: number; countering: number; fitness: number };
 type HumanPlayStyle = { shots: number; passes: number; carries: number; nutmegs: number };
+const emptyHumanPlayStyle = (): HumanPlayStyle => ({ shots: 0, passes: 0, carries: 0, nutmegs: 0 });
 type EvolvedAiArtifact = {
   version: number;
   method: string;
@@ -1190,6 +1245,7 @@ function makeMatch(
     actionsUsed: 0,
     bonusDrives: 0,
     bonusActions: 0,
+    luck: emptyLuck(),
   };
 }
 
@@ -1220,19 +1276,7 @@ function App() {
   const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
   const [level, setLevel] = useState(() => devToolsEnabled ? campaignStageCount : 1);
   const [aiDifficulty, setAiDifficulty] = useState(1);
-  const [humanPlayStyle, setHumanPlayStyle] = useState<HumanPlayStyle>(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem("blitz-league-ai-style") ?? "{}");
-      return {
-        shots: Number.isFinite(saved.shots) ? Math.max(0, saved.shots) : 0,
-        passes: Number.isFinite(saved.passes) ? Math.max(0, saved.passes) : 0,
-        carries: Number.isFinite(saved.carries) ? Math.max(0, saved.carries) : 0,
-        nutmegs: Number.isFinite(saved.nutmegs) ? Math.max(0, saved.nutmegs) : 0,
-      };
-    } catch {
-      return { shots: 0, passes: 0, carries: 0, nutmegs: 0 };
-    }
-  });
+  const [humanPlayStyle, setHumanPlayStyle] = useState<HumanPlayStyle>(emptyHumanPlayStyle);
   const [match, setMatch] = useState<Match>(() => makeMatch([], 1, "classic"));
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
@@ -1351,6 +1395,7 @@ function App() {
   };
   const recordPlayerAction = (action: keyof HumanPlayStyle) =>
     setHumanPlayStyle((style) => ({ ...style, [action]: style[action] + 1 }));
+  const resetMatchLearning = () => setHumanPlayStyle(emptyHumanPlayStyle());
 
   const buyDailyOffer = (player: Player) => {
     const offerKey = `${dailyOfferDateKey}:${player.id}`;
@@ -1541,11 +1586,6 @@ function App() {
     captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
 
   useEffect(() => {
-    if (!saveReady || devToolsEnabled) return;
-    window.localStorage.setItem("blitz-league-ai-style", JSON.stringify(humanPlayStyle));
-  }, [humanPlayStyle, saveReady, devToolsEnabled]);
-
-  useEffect(() => {
     if (screen !== "store") return;
     const timer = window.setInterval(() => setStoreNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -1672,6 +1712,7 @@ function App() {
         return;
       }
       if (packet.type === "room-created" && packet.match) {
+        resetMatchLearning();
         setOnlineRoomCode(packet.code ?? "");
         setOnlineSide("home");
         setQuickplaySide("home");
@@ -1682,6 +1723,7 @@ function App() {
         return;
       }
       if (packet.type === "room-joined" && packet.match) {
+        resetMatchLearning();
         setOnlineRoomCode(packet.code ?? "");
         setOnlineSide("away");
         setQuickplaySide("away");
@@ -1738,6 +1780,7 @@ function App() {
 
   function startLocalQuickplay() {
     setPassMode(false);
+    resetMatchLearning();
     const initial = makeMatch(homePlayers, level, activeFormat, homePlayers, activeFormation, formationAssignments[activeFormationId] ?? {});
     initial.message = "Local Quickplay · Home kicks off. Both teams have the same lineup. Take turns on this screen and pass the device after each turn.";
     setQuickplaySide("home");
@@ -1748,8 +1791,10 @@ function App() {
 
   function startCpuQuickplay() {
     setPassMode(false);
-    const strategy = adaptAiStrategy(aiStrategyForLevel(aiDifficulty), humanPlayStyle, aiDifficulty);
-    const cpuLineup = chooseAiFormation(awayPlayers, strategy, humanPlayStyle);
+    const freshStyle = emptyHumanPlayStyle();
+    setHumanPlayStyle(freshStyle);
+    const strategy = adaptAiStrategy(aiStrategyForLevel(aiDifficulty), freshStyle, aiDifficulty);
+    const cpuLineup = chooseAiFormation(awayPlayers, strategy, freshStyle);
     const initial = makeMatch(awayPlayers, aiDifficulty, activeFormat, homePlayers, activeFormation,
       formationAssignments[activeFormationId] ?? {}, cpuLineup.formation, cpuLineup.assignments);
     initial.message = "CPU Quickplay · You control the home team. Select a player, then choose a highlighted tile to move.";
@@ -1764,10 +1809,12 @@ function App() {
     setPassMode(false);
     stopQuickplay();
     const stageDifficulty = Math.min(100, nextLevel);
+    resetMatchLearning();
     const stageOpponentXI = aiOpponentRoster(stageDifficulty);
     const stageFormat = campaignFormatForStage(nextLevel);
-    const stageStrategy = adaptAiStrategy(aiStrategyForLevel(stageDifficulty), humanPlayStyle, stageDifficulty);
-    const stageLineup = chooseAiFormation(stageOpponentXI, stageStrategy, humanPlayStyle);
+    const freshStyle = emptyHumanPlayStyle();
+    const stageStrategy = adaptAiStrategy(aiStrategyForLevel(stageDifficulty), freshStyle, stageDifficulty);
+    const stageLineup = chooseAiFormation(stageOpponentXI, stageStrategy, freshStyle);
     setMatch(makeMatch(stageOpponentXI, nextLevel, stageFormat, homePlayers, activeFormation,
       formationAssignments[activeFormationId] ?? {}, stageLineup.formation, stageLineup.assignments));
     setScreen("match");
@@ -1846,6 +1893,7 @@ function App() {
       if (isInOwnPenaltyBox(owner, ai.half)) {
         const clearance = resolveGoalkeeperClearance(ai, owner);
         ai.ball = clearance.ball;
+        ai.luck = clearance.luck;
         ai.stealProtectedSide = undefined;
         ai.message = clearance.message;
       } else {
@@ -1874,11 +1922,18 @@ function App() {
         const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
         const goal = { x: latest.half === 1 ? 0 : 21, y: 5 };
         const interception = findInterceptor(ai.tokens, "away", lineCells(owner, goal));
-        if (interception && Math.random() * 100 < interceptionChance(interception.token, "shot", interception.gap)) {
-          ai.ball = { x: interception.token.x, y: interception.token.y };
+        const block = interception
+          ? rollLuck(ai, interception.token.side, "away", interceptionChance(interception.token, "shot", interception.gap))
+          : undefined;
+        const shot = block?.success
+          ? undefined
+          : rollLuck(block?.match ?? ai, "away", "home", chance);
+        ai.luck = (shot?.match ?? block?.match ?? ai).luck;
+        if (block?.success) {
+          ai.ball = { x: interception!.token.x, y: interception!.token.y };
           ai.stealProtectedSide = undefined;
-          ai.message = `${interception.token.player.name} blocks the opposition's shot and intercepts the ball!`;
-        } else if (Math.random() * 100 < chance) {
+          ai.message = `${interception!.token.player.name} blocks the opposition's shot and intercepts the ball!`;
+        } else if (shot?.success) {
           ai.score = [ai.score[0], ai.score[1] + 1];
           const kickoff = resetKickoff(ai.tokens, "home", ai.half, matchIsSmallSided);
           ai.tokens = kickoff.tokens;
@@ -1909,16 +1964,20 @@ function App() {
         } else {
           ai.ball = goal;
           ai.stealProtectedSide = undefined;
-          ai.message = `The opposition's shot from ${goalDistance} tiles out goes wide. The ball is loose by your goal.`;
+          ai.message = `The opposition's shot from ${goalDistance} tiles out goes wide (${Math.round(shot?.chance ?? chance)}% chance). The ball is loose by your goal.`;
         }
       } else if (action?.kind === "pass") {
         const receiver = action.receiver;
         const passGap = distance(owner, receiver);
         const interceptor = findInterceptor(ai.tokens, "away", lineCells(owner, receiver).slice(0, -1));
-        if (interceptor && Math.random() * 100 < interceptionChance(interceptor.token, "pass", interceptor.gap)) {
-          ai.ball = { x: interceptor.token.x, y: interceptor.token.y };
+        const passRoll = interceptor
+          ? rollLuck(ai, interceptor.token.side, "away", interceptionChance(interceptor.token, "pass", interceptor.gap))
+          : undefined;
+        ai.luck = (passRoll?.match ?? ai).luck;
+        if (passRoll?.success) {
+          ai.ball = { x: interceptor!.token.x, y: interceptor!.token.y };
           ai.stealProtectedSide = undefined;
-          ai.message = `${interceptor.token.player.name} reads the opposition pass and intercepts it!`;
+          ai.message = `${interceptor!.token.player.name} reads the opposition pass and intercepts it!`;
         } else {
           ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
           const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
@@ -1956,7 +2015,9 @@ function App() {
             const help = adjacentDefenders.filter((token) => token.player.id !== presser.player.id).length;
             const chance = cap(stealChanceFor(presser, carrier, ai.half)
               + help * 3.5 + strategy.pressing * 3, 15, 78);
-            if (Math.random() * 100 < chance) {
+            const stealRoll = rollLuck(ai, "away", "home", chance);
+            ai.luck = stealRoll.match.luck;
+            if (stealRoll.success) {
               const landing = stealLanding(ai.tokens, presser, carrier, ai.half);
               ai.tokens = ai.tokens.map((token) => token.player.id === presser.player.id
                 ? { ...token, x: landing.x, y: landing.y }
@@ -1966,9 +2027,9 @@ function App() {
               const shiftedPresser = ai.tokens.find((token) => token.player.id === presser.player.id);
               if (shiftedPresser) ai.ball = { x: shiftedPresser.x, y: shiftedPresser.y };
               ai.stealProtectedSide = "away";
-              ai.message = `${presser.player.name} steals the ball with ${help + 1}-player pressure and gets in front of ${carrier.player.name} (${chance}% chance). The opposition team pushes upfield.`;
+              ai.message = `${presser.player.name} steals the ball with ${help + 1}-player pressure and gets in front of ${carrier.player.name} (${Math.round(stealRoll.chance)}% chance). The opposition team pushes upfield.`;
             } else {
-              ai.message = `${carrier.player.name} evades the opposition's ${help + 1}-player press (${chance}% chance).`;
+              ai.message = `${carrier.player.name} evades the opposition's ${help + 1}-player press (${Math.round(stealRoll.chance)}% chance).`;
             }
           }
         } else if (defensiveOptions.length) {
@@ -2219,29 +2280,34 @@ function App() {
     };
     const shotPath = lineCells(player, goal);
     const interception = findInterceptor(match.tokens, player.side, shotPath);
-    if (interception && Math.random() * 100 < interceptionChance(interception.token, "shot", interception.gap)) {
-      const tokens = shiftFormationWithBall(match.tokens, match.ball.x, interception.token.x, interception.token.player.id, match.half);
-      const shiftedBlocker = tokens.find((token) => token.player.id === interception.token.player.id) ?? interception.token;
+    const opponentSide = player.side === "home" ? "away" : "home";
+    const block = interception
+      ? rollLuck(match, interception.token.side, player.side, interceptionChance(interception.token, "shot", interception.gap))
+      : undefined;
+    if (block?.success) {
+      const tokens = shiftFormationWithBall(block.match.tokens, match.ball.x, interception!.token.x, interception!.token.player.id, match.half);
+      const shiftedBlocker = tokens.find((token) => token.player.id === interception!.token.player.id) ?? interception!.token;
       endTurn({
-        ...match,
+        ...block.match,
         tokens,
         ball: { x: shiftedBlocker.x, y: shiftedBlocker.y },
         selected: shiftedBlocker.player.id,
         stealProtectedSide: undefined,
-        message: `${interception.token.player.name} reads the shot and intercepts it! ${interception.gap ? "A nearby defender closes the shooting lane." : "A defender blocks the shooting lane."} Their defense gets possession.`,
+        message: `${interception!.token.player.name} reads the shot and intercepts it! ${interception!.gap ? "A nearby defender closes the shooting lane." : "A defender blocks the shooting lane."} Their defense gets possession.`,
       });
       return;
     }
-    const scored = Math.random() * 100 < accuracy;
-    if (scored) {
+    const shot = rollLuck(block?.match ?? match, player.side, opponentSide, accuracy);
+    const shotChance = Math.round(shot.chance);
+    if (shot.success) {
       if (quickplaySide !== null) {
         const kickoffSide = player.side === "home" ? "away" : "home";
-        const kickoff = resetKickoff(match.tokens, kickoffSide, match.half, matchIsSmallSided);
+        const kickoff = resetKickoff(shot.match.tokens, kickoffSide, match.half, matchIsSmallSided);
         const score: [number, number] = [...match.score];
         score[player.side === "home" ? 0 : 1] += 1;
         const finished = score[player.side === "home" ? 0 : 1] >= goalTarget;
         setMatch({
-          ...match,
+          ...shot.match,
           tokens: kickoff.tokens,
           score,
           ball: kickoff.ball,
@@ -2253,14 +2319,13 @@ function App() {
           bonusActions: 0,
           stealProtectedSide: undefined,
           finished,
-          message: finished ? `${player.player.name} scores the winner!` : `${player.player.name} scores from ${dist} tiles out at a ${angle}° angle (${accuracy}% chance). ${kickoffSide === "home" ? "Home" : "Away"} restarts from kickoff.`,
+          message: finished ? `${player.player.name} scores the winner!` : `${player.player.name} scores from ${dist} tiles out at a ${angle}° angle (${shotChance}% chance). ${kickoffSide === "home" ? "Home" : "Away"} restarts from kickoff.`,
         });
         if (finished) setScreen("victory");
         return;
       }
-      const tokens = match.tokens;
-      const kickoff = resetKickoff(tokens, "away", match.half, matchIsSmallSided);
-      const next = { ...match, tokens: kickoff.tokens, ball: kickoff.ball, turn: "away" as const, selected: closestPlayerId(kickoff.tokens, kickoff.ball, "away"), stealProtectedSide: undefined, score: [match.score[0] + 1, match.score[1]] as [number, number], message: `${player.player.name} scores from ${dist} tiles out at a ${angle}° angle (${accuracy}% chance). Away restarts from kickoff.` };
+      const kickoff = resetKickoff(shot.match.tokens, "away", match.half, matchIsSmallSided);
+      const next = { ...shot.match, tokens: kickoff.tokens, ball: kickoff.ball, turn: "away" as const, selected: closestPlayerId(kickoff.tokens, kickoff.ball, "away"), stealProtectedSide: undefined, score: [match.score[0] + 1, match.score[1]] as [number, number], message: `${player.player.name} scores from ${dist} tiles out at a ${angle}° angle (${shotChance}% chance). Away restarts from kickoff.` };
       const finished = finishOrSet(next);
       if (finished.score[0] < goalTarget) {
         finished.turn = "away";
@@ -2273,13 +2338,13 @@ function App() {
         window.setTimeout(runAiTurn, 450);
       } else setMatch(finished);
     } else {
-      const tokens = shiftFormationWithBall(match.tokens, match.ball.x, goal.x, player.player.id, match.half);
+      const tokens = shiftFormationWithBall(shot.match.tokens, match.ball.x, goal.x, player.player.id, match.half);
       const updated = {
-        ...match,
+        ...shot.match,
         tokens,
         ball: goal,
         stealProtectedSide: undefined,
-        message: `${player.player.name}'s shot sails wide from ${dist} tiles out (${accuracy}% chance). The ball is loose by the goal.`,
+        message: `${player.player.name}'s shot sails wide from ${dist} tiles out (${shotChance}% chance). The ball is loose by the goal.`,
       };
       endTurn(updated);
     }
@@ -2347,24 +2412,28 @@ function App() {
     const interceptionPath = lineCells(player, receiver).slice(0, -1);
     recordPlayerAction("passes");
     const interceptor = findInterceptor(match.tokens, player.side, interceptionPath);
-    if (interceptor && Math.random() * 100 < interceptionChance(interceptor.token, "pass", interceptor.gap)) {
-      const tokens = shiftFormationWithBall(match.tokens, match.ball.x, interceptor.token.x, interceptor.token.player.id, match.half);
-      const shiftedInterceptor = tokens.find((token) => token.player.id === interceptor.token.player.id) ?? interceptor.token;
+    const passRoll = interceptor
+      ? rollLuck(match, interceptor.token.side, player.side, interceptionChance(interceptor.token, "pass", interceptor.gap))
+      : undefined;
+    if (passRoll?.success) {
+      const tokens = shiftFormationWithBall(passRoll.match.tokens, match.ball.x, interceptor!.token.x, interceptor!.token.player.id, match.half);
+      const shiftedInterceptor = tokens.find((token) => token.player.id === interceptor!.token.player.id) ?? interceptor!.token;
       const updated = {
-        ...match,
+        ...passRoll.match,
         tokens,
         ball: { x: shiftedInterceptor.x, y: shiftedInterceptor.y },
         selected: shiftedInterceptor.player.id,
         stealProtectedSide: undefined,
-        message: `${interceptor.token.player.name} steps into ${player.player.name}'s pass and intercepts it!`,
+        message: `${interceptor!.token.player.name} steps into ${player.player.name}'s pass and intercepts it!`,
       };
       setPassMode(false);
       endTurn(updated);
       return;
     }
-    const tokens = shiftFormationWithBall(match.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
+    const passBase = passRoll?.match ?? match;
+    const tokens = shiftFormationWithBall(passBase.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
     const shiftedReceiver = tokens.find((token) => token.player.id === receiver.player.id) ?? receiver;
-    const updated = { ...match, tokens, ball: { x: shiftedReceiver.x, y: shiftedReceiver.y }, selected: receiver.player.id, stealProtectedSide: undefined, message: `Pass completed to ${receiver.player.name}; both teams shift with the ball.` };
+    const updated = { ...passBase, tokens, ball: { x: shiftedReceiver.x, y: shiftedReceiver.y }, selected: receiver.player.id, stealProtectedSide: undefined, message: `Pass completed to ${receiver.player.name}; both teams shift with the ball.` };
     setPassMode(false);
     spendAction(updated, updated.message);
   }
@@ -2386,28 +2455,29 @@ function App() {
       return;
     }
     const chance = stealChanceFor(defender, carrier, match.half);
-    if (Math.random() * 100 < chance) {
-      const landing = stealLanding(match.tokens, defender, carrier, match.half);
-      let tokens = match.tokens.map((token) => token.player.id === defender.player.id
+    const stealRoll = rollLuck(match, defender.side, carrier.side, chance);
+    if (stealRoll.success) {
+      const landing = stealLanding(stealRoll.match.tokens, defender, carrier, match.half);
+      let tokens = stealRoll.match.tokens.map((token) => token.player.id === defender.player.id
         ? { ...token, x: landing.x, y: landing.y }
         : token);
       tokens = shiftFormationWithBall(tokens, match.ball.x, landing.x, defender.player.id, match.half);
       tokens = pushTeamUpfield(tokens, defender.side, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
       const updated = {
-        ...match,
+        ...stealRoll.match,
         tokens,
         ball: { x: shiftedDefender.x, y: shiftedDefender.y },
         selected: defender.player.id,
         stealProtectedSide: defender.side,
-        message: `${defender.player.name} wins the ball and steps in front of ${carrier.player.name} (${chance}% chance). ${defender.side === "home" ? "Your" : "Opposition"} forwards push upfield.`,
+        message: `${defender.player.name} wins the ball and steps in front of ${carrier.player.name} (${Math.round(stealRoll.chance)}% chance). ${defender.side === "home" ? "Your" : "Opposition"} forwards push upfield.`,
       };
       spendAction(updated, updated.message);
       return;
     }
     endTurn({
-      ...match,
-      message: `${defender.player.name}'s steal attempt is evaded (${chance}% chance). ${carrier.player.name} keeps possession.`,
+      ...stealRoll.match,
+      message: `${defender.player.name}'s steal attempt is evaded (${Math.round(stealRoll.chance)}% chance). ${carrier.player.name} keeps possession.`,
     });
   }
 
@@ -2438,11 +2508,11 @@ function App() {
     const nx = behindBlocked ? defender.x : behindX;
     const ny = behindBlocked ? defender.y : behindY;
     const chance = nutmegChance(player.player);
-    const success = Math.random() * 100 < chance;
-    if (success) {
+    const nutmegRoll = rollLuck(match, player.side, defender.side, chance);
+    if (nutmegRoll.success) {
       let updated = {
-        ...match,
-        tokens: match.tokens.map((t) => {
+        ...nutmegRoll.match,
+        tokens: nutmegRoll.match.tokens.map((t) => {
           if (t.player.id === player.player.id) return { ...t, x: nx, y: ny };
           if (behindBlocked && t.player.id === defender.player.id) return { ...t, x: player.x, y: player.y };
           return t;
@@ -2453,13 +2523,13 @@ function App() {
       updated.tokens = shiftFormationWithBall(updated.tokens, match.ball.x, nx, player.player.id, match.half);
       const shiftedCarrier = updated.tokens.find((token) => token.player.id === player.player.id);
       if (shiftedCarrier) updated.ball = { x: shiftedCarrier.x, y: shiftedCarrier.y };
-      spendAction(updated, `${player.player.name} nutmegs ${defender.player.name}! ${chance}% odds — bonus drive and action earned.`, true);
+      spendAction(updated, `${player.player.name} nutmegs ${defender.player.name}! ${Math.round(nutmegRoll.chance)}% odds — bonus drive and action earned.`, true);
     } else {
       const opponentSide = player.side === "home" ? "away" : "home";
-      const tokens = shiftFormationWithBall(match.tokens, match.ball.x, defender.x, defender.player.id, match.half);
+      const tokens = shiftFormationWithBall(nutmegRoll.match.tokens, match.ball.x, defender.x, defender.player.id, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
       setMatch({
-        ...match,
+        ...nutmegRoll.match,
         tokens,
         ball: { x: shiftedDefender.x, y: shiftedDefender.y },
         selected: closestPlayerId(tokens, { x: shiftedDefender.x, y: shiftedDefender.y }, opponentSide),
@@ -2563,6 +2633,26 @@ function App() {
   const canSteal = !!selectedPlayer && canAct && !!opposingCarrier
     && selectedPlayer.side === activeSide && adjacent(selectedPlayer, opposingCarrier)
     && match.stealProtectedSide !== opposingCarrier.side;
+  const selectedOpponentSide = selectedPlayer?.side === "home" ? "away" : "home";
+  const displayedShotChance = selectedPlayer && canShoot
+    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide,
+      shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half),
+        shotAngleDegrees(selectedPlayer, match.half)))
+    : 0;
+  const displayedClearChance = selectedPlayer
+    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, clearAccuracy)
+    : 0;
+  const displayedNutmegChance = selectedPlayer
+    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, nutmegChance(selectedPlayer.player))
+    : 0;
+  const displayedStealChance = selectedPlayer && opposingCarrier
+    ? luckAdjustedChance(match, selectedPlayer.side, opposingCarrier.side, stealChance)
+    : 50;
+  const homeLuck = luckPercent(match.luck.home);
+  const awayLuck = luckPercent(match.luck.away);
+  const luckChecks = Math.max(match.luck.home.attempts, match.luck.away.attempts);
+  const homeLuckLabel = quickplayMode === "cpu" || quickplayMode === null ? "YOU" : "HOME";
+  const awayLuckLabel = quickplayMode === "cpu" || quickplayMode === null ? "CPU" : "AWAY";
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2626,7 +2716,7 @@ function App() {
         .token{width:clamp(12px,2.4cqw,36px);height:clamp(12px,2.4cqw,36px);border-radius:50%;display:grid;place-items:center;font:700 clamp(6px,1cqw,14px) 'DM Mono',monospace;color:#10150f;box-shadow:0 2px 8px #0008;position:relative}
         .token.away{background:#ec695e!important;color:#fff}.token.selected{outline:2px solid white;outline-offset:2px;box-shadow:0 0 14px #fff8}.ball{position:absolute;width:clamp(6px,1cqw,15px);height:clamp(6px,1cqw,15px);border-radius:50%;background:#fff;box-shadow:0 0 0 2px #121712,0 0 7px #fff8;top:-3px;right:-2px}
         .ball-only{font-size:clamp(13px,2.6cqw,40px);filter:drop-shadow(0 1px 2px #000)}.legend{display:flex;gap:14px;color:#9ca79d;font:9px 'DM Mono',monospace;padding:12px 3px 2px}.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.message{padding:11px 13px;border-radius:9px;background:#ffffff08;color:#c0c9c0;font-size:11px;line-height:1.5;margin-top:12px;min-height:40px}
-        .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}
+        .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}.luck-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:10px}.luck-row b{font-size:10px;letter-spacing:.06em}.luck-row small{display:block;color:#8d998e;font-size:9px;margin-top:3px;font-weight:400;letter-spacing:0}.luck-row strong{font:700 16px 'DM Mono',monospace;color:#b8f36b}.luck-row strong.luck-hot{color:#f5c26b}.luck-row strong.luck-cold{color:#7fd1f5}.luck-bar{height:4px;background:#ffffff12;border-radius:99px;overflow:hidden;margin-top:6px}.luck-bar span{display:block;height:100%;background:#b8f36b;border-radius:99px;transition:width .3s ease}.luck-note{color:#929d93;font-size:10px;line-height:1.7;margin-top:12px}
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
         .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}.ai-evolution-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.ai-evolution-stats span{background:#ffffff05;border:1px solid #ffffff10;border-radius:9px;padding:9px 10px}.ai-evolution-stats strong{display:block;font:700 13px 'DM Mono',monospace;color:#d7f583}.ai-evolution-stats small{display:block;margin-top:3px;color:#8e998f;font:8px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:520px){.ai-evolution-stats{grid-template-columns:1fr 1fr}}
@@ -2970,14 +3060,14 @@ function App() {
             <span><strong>{evolvedAi.matchesSimulated.toLocaleString()}</strong><small>matches evolved</small></span>
             <span><strong>{(evolvedAi.validation.winRate * 100).toFixed(0)}%</strong><small>validation wins</small></span>
             <span><strong>{evolvedAi.validation.goalDifference.toFixed(2)}</strong><small>goal difference</small></span>
-            <span><strong>{humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs}</strong><small>actions learned</small></span>
+            <span><strong>{humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs}</strong><small>actions this game</small></span>
           </div>
-          <p className="ai-difficulty-note">The CPU teaches a population from real StatsBomb action preferences and tactical archetypes, breeds the fittest genomes, and mutates the next generation. Its evolved genes drive passing, carrying, shooting, pressing, marking, and countering, while the live coach learns your shot, pass, carry, and nutmeg mix and adjusts its plan.</p>
+          <p className="ai-difficulty-note">The CPU teaches a population from real StatsBomb action preferences and tactical archetypes, breeds the fittest genomes, and mutates the next generation. Its evolved genes drive passing, carrying, shooting, pressing, marking, and countering, while the live coach learns your shot, pass, carry, and nutmeg mix inside the current game and adjusts its plan. Tendencies reset at kickoff, so every match is coached from scratch.</p>
           <p className="small-note" style={{ lineHeight: 1.7, margin: "10px 0 0" }}>
             <img src={`${import.meta.env.BASE_URL}statsbomb-icon.svg`} alt="StatsBomb" width="18" height="18"
               style={{ display: "inline-block", verticalAlign: "middle", marginRight: 6, borderRadius: 3 }} />
             Data credit: <a href="https://github.com/hudl/open-data" target="_blank" rel="noreferrer">StatsBomb Open Data</a>.
-            The CPU also adapts to your local tendencies—shots, passes, carries, and nutmegs ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed).
+            The CPU also adapts to your tendencies in this game—shots, passes, carries, and nutmegs ({humanPlayStyle.shots + humanPlayStyle.passes + humanPlayStyle.carries + humanPlayStyle.nutmegs} actions observed since kickoff).
           </p>
         </section>
         <div className="quickplay-options">
@@ -3092,13 +3182,20 @@ function App() {
         <aside className="sidebar">
           <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#8e998f" }}>Select a player on the pitch</small>}</section>
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
-            <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half), shotAngleDegrees(selectedPlayer, match.half))}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
-            {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${clearAccuracy}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
+            <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${Math.round(displayedShotChance)}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
+            {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${Math.round(displayedClearChance)}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
             <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passReach} tiles`}</span></button>
-            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${nutmegChance(selectedPlayer.player)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
-            <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${stealChance}% · adjacent carrier` : "defend near the ball"}</span></button>
+            <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${Math.round(displayedNutmegChance)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
+            <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${Math.round(displayedStealChance)}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplayMode === "online" ? "Turn passed to your online opponent." : quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplayMode === "online" ? "send turn online" : quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>
+          <section className="side-panel"><h3>Luck balance</h3>
+            <div className="luck-row"><div><b>{homeLuckLabel}</b><small>{match.luck.home.successes}/{match.luck.home.attempts} random checks won</small></div><strong className={homeLuck > 55 ? "luck-hot" : homeLuck < 45 ? "luck-cold" : ""}>{homeLuck}%</strong></div>
+            <div className="luck-bar"><span style={{ width: `${homeLuck}%` }} /></div>
+            <div className="luck-row"><div><b>{awayLuckLabel}</b><small>{match.luck.away.successes}/{match.luck.away.attempts} random checks won</small></div><strong className={awayLuck > 55 ? "luck-hot" : awayLuck < 45 ? "luck-cold" : ""}>{awayLuck}%</strong></div>
+            <div className="luck-bar"><span style={{ width: `${awayLuck}%` }} /></div>
+            <div className="luck-note">Counted fresh each game across {luckChecks} random check{luckChecks === 1 ? "" : "s"}. Every roll softly pulls both sides toward a 50% average — the further a side strays, the stronger the correction, but no result is ever guaranteed.</div>
+          </section>
           {devToolsEnabled && <section className="side-panel"><h3>Developer controls</h3>
             <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>
             <div className="small-note" style={{ marginTop: 9 }}>Awards the current match and progression rewards for UI testing.</div>

@@ -988,6 +988,438 @@ const defensiveMoveOptions = (
     .sort((a, b) => b.score - a.score);
 };
 
+// ---------------------------------------------------------------------------
+// Minimax lookahead
+// ---------------------------------------------------------------------------
+// Inspired by the minimax + alpha-beta section of commonLuke's chess-engine
+// video. The AI no longer just ranks its current options; it simulates the
+// move, lets the opponent answer, and scores the resulting board with a static
+// evaluation function. Alpha-beta pruning and move ordering keep the search
+// small enough to run inside a turn.
+type TacticalState = {
+  tokens: Token[];
+  ball: { x: number; y: number };
+  score: [number, number];
+  turn: "home" | "away";
+  half: 1 | 2;
+  smallSided: boolean;
+};
+
+type TacticalAction =
+  | { kind: "move"; tokenId: string; x: number; y: number }
+  | { kind: "pass"; fromId: string; toId: string }
+  | { kind: "shoot"; tokenId: string }
+  | { kind: "steal"; tokenId: string }
+  | { kind: "clear"; tokenId: string };
+
+const otherSide = (side: "home" | "away"): "home" | "away" => side === "home" ? "away" : "home";
+
+const tokenAtBall = (state: TacticalState) =>
+  state.tokens.find((token) => token.x === state.ball.x && token.y === state.ball.y);
+
+const tacticalGoalX = (side: "home" | "away", half: 1 | 2) =>
+  side === "home" ? (half === 1 ? 21 : 0) : (half === 1 ? 0 : 21);
+
+const tacticalGoalDistance = (point: { x: number; y: number }, side: "home" | "away", half: 1 | 2) =>
+  Math.abs(tacticalGoalX(side, half) - point.x) + Math.abs(point.y - 5) * 0.35;
+
+// Static board score, positive when the move is good for the away side.
+// It mirrors the hand-written evaluation in the video: material first, then
+// positional bonuses for central control, support, and shooting lanes.
+const tacticalEvaluation = (state: TacticalState) => {
+  const owner = tokenAtBall(state);
+  const awayGoalDistance = tacticalGoalDistance(state.ball, "away", state.half);
+  const homeGoalDistance = tacticalGoalDistance(state.ball, "home", state.half);
+  let value = (state.score[1] - state.score[0]) * 1000;
+  value += (22 - awayGoalDistance) * 2.6;
+  value -= (22 - homeGoalDistance) * 2.6;
+
+  if (owner?.side === "away") value += 45;
+  else if (owner?.side === "home") value -= 45;
+
+  const awayTokens = state.tokens.filter((token) => token.side === "away");
+  const homeTokens = state.tokens.filter((token) => token.side === "home");
+  const nearestAway = awayTokens.length
+    ? Math.min(...awayTokens.map((token) => distance(token, state.ball))) : 99;
+  const nearestHome = homeTokens.length
+    ? Math.min(...homeTokens.map((token) => distance(token, state.ball))) : 99;
+  value += (nearestHome - nearestAway) * (owner ? 1.7 : 3.4);
+
+  if (owner) {
+    const goalDistance = ownGoalDistance(owner, state.half);
+    if (goalDistance <= shotRange(owner.player)) {
+      const accuracy = shotAccuracy(owner, state.tokens, goalDistance, shotAngleDegrees(owner, state.half));
+      value += (owner.side === "away" ? 1 : -1) * (accuracy - 35) * 1.1;
+    }
+    const support = state.tokens.filter((token) => token.side === owner.side
+      && token.player.id !== owner.player.id && distance(token, owner) <= 4).length;
+    value += (owner.side === "away" ? 1 : -1) * support * 3.5;
+  }
+
+  for (const side of ["home", "away"] as const) {
+    const keeper = state.tokens.find((token) => token.side === side && token.player.position === "GK");
+    if (!keeper) continue;
+    const ownGoalX = side === "home" ? (state.half === 1 ? 0 : 21) : (state.half === 1 ? 21 : 0);
+    value += (side === "away" ? 1 : -1) * (6 - Math.min(Math.abs(keeper.x - ownGoalX), 6)) * 1.2;
+  }
+  return value;
+};
+
+const tacticalReachablePoints = (state: TacticalState, mover: Token, maxSteps: number) => {
+  const occupied = new Set(state.tokens
+    .filter((token) => token.player.id !== mover.player.id)
+    .map((token) => `${token.x},${token.y}`));
+  const queue = [{ x: mover.x, y: mover.y, steps: 0 }];
+  const visited = new Set([`${mover.x},${mover.y}`]);
+  const points: { x: number; y: number; steps: number }[] = [];
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    if (current.steps > 0) points.push(current);
+    if (current.steps >= maxSteps) continue;
+    for (const point of [
+      { x: current.x + 1, y: current.y },
+      { x: current.x - 1, y: current.y },
+      { x: current.x, y: current.y + 1 },
+      { x: current.x, y: current.y - 1 },
+    ]) {
+      const key = `${point.x},${point.y}`;
+      if (point.x < 0 || point.x > 21 || point.y < 0 || point.y > 10
+        || occupied.has(key) || visited.has(key)) continue;
+      visited.add(key);
+      queue.push({ ...point, steps: current.steps + 1 });
+    }
+  }
+  return points;
+};
+
+const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): TacticalAction[] => {
+  const owner = tokenAtBall(state);
+  const actions: TacticalAction[] = [];
+  if (owner?.side === side) {
+    const goalDistance = ownGoalDistance(owner, state.half);
+    if (goalDistance <= shotRange(owner.player)) {
+      actions.push({ kind: "shoot", tokenId: owner.player.id });
+    }
+    if (owner.player.position === "GK" && isInOwnPenaltyBox(owner, state.half)) {
+      actions.push({ kind: "clear", tokenId: owner.player.id });
+    }
+    const receivers = state.tokens
+      .filter((token) => token.side === side && token.player.id !== owner.player.id
+        && distance(owner, token) <= passingRange(owner.player))
+      .map((token) => ({
+        token,
+        score: (goalDistance - ownGoalDistance(token, state.half)) * 1.2
+          + Math.min(nearestOpponentGap(state.tokens, token, side), 5) * 0.5,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+    for (const { token } of receivers) {
+      actions.push({ kind: "pass", fromId: owner.player.id, toId: token.player.id });
+    }
+    const carries = tacticalReachablePoints(state, owner, 2 + movementBonus(owner.player))
+      .map((point) => ({
+        point,
+        score: (goalDistance - tacticalGoalDistance(point, side, state.half)) * 1.4
+          + Math.min(nearestOpponentGap(state.tokens, point, side), 5) * 0.45
+          - Math.abs(point.y - 5) * 0.2,
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+    for (const { point } of carries) {
+      actions.push({ kind: "move", tokenId: owner.player.id, x: point.x, y: point.y });
+    }
+    return actions;
+  }
+
+  if (owner) {
+    const defenders = state.tokens.filter((token) => token.side === side && token.player.position !== "GK");
+    for (const defender of defenders) {
+      if (adjacent(defender, owner)) actions.push({ kind: "steal", tokenId: defender.player.id });
+    }
+    const lane = lineCells(owner, { x: tacticalGoalX(owner.side, state.half), y: 5 });
+    const closest = defenders
+      .map((defender) => ({ defender, gap: distance(defender, owner) }))
+      .sort((a, b) => a.gap - b.gap)
+      .slice(0, 4);
+    for (const { defender } of closest) {
+      const moves = tacticalReachablePoints(state, defender, 2 + movementBonus(defender.player))
+        .map((point) => ({
+          point,
+          score: -distance(point, owner) * 1.5
+            - (lane.length ? Math.min(...lane.map((lanePoint) => distance(point, lanePoint))) : 0) * 0.8,
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2);
+      for (const { point } of moves) {
+        actions.push({ kind: "move", tokenId: defender.player.id, x: point.x, y: point.y });
+      }
+    }
+    return actions;
+  }
+
+  const chasers = state.tokens
+    .filter((token) => token.side === side && token.player.position !== "GK")
+    .map((token) => ({ token, gap: distance(token, state.ball) }))
+    .sort((a, b) => a.gap - b.gap)
+    .slice(0, 3);
+  for (const { token } of chasers) {
+    const moves = tacticalReachablePoints(state, token, 2 + movementBonus(token.player))
+      .map((point) => ({ point, score: -distance(point, state.ball) * 2 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2);
+    for (const { point } of moves) {
+      actions.push({ kind: "move", tokenId: token.player.id, x: point.x, y: point.y });
+    }
+  }
+  return actions;
+};
+
+const applyTacticalAction = (
+  state: TacticalState,
+  action: TacticalAction,
+  outcome: "success" | "failure" | "wide" = "success",
+): TacticalState => {
+  const side = state.turn;
+  const tokens = state.tokens.map((token) => ({ ...token }));
+  let ball = { ...state.ball };
+  const score: [number, number] = [state.score[0], state.score[1]];
+  const owner = tokenAtBall(state);
+
+  if (action.kind === "move") {
+    const mover = tokens.find((token) => token.player.id === action.tokenId);
+    if (!mover) return state;
+    const hadBall = ball.x === mover.x && ball.y === mover.y;
+    const fromX = mover.x;
+    mover.x = action.x;
+    mover.y = action.y;
+    if (hadBall) {
+      const shifted = shiftFormationWithBall(tokens, fromX, action.x, mover.player.id, state.half);
+      const shiftedMover = shifted.find((token) => token.player.id === mover.player.id) ?? mover;
+      ball = { x: shiftedMover.x, y: shiftedMover.y };
+      return { ...state, tokens: shifted, ball, score, turn: otherSide(side) };
+    }
+    return { ...state, tokens, ball, score, turn: otherSide(side) };
+  }
+
+  if (action.kind === "pass") {
+    const from = tokens.find((token) => token.player.id === action.fromId);
+    const receiver = tokens.find((token) => token.player.id === action.toId);
+    if (!from || !receiver) return state;
+    const interceptor = findInterceptor(state.tokens, side, lineCells(from, receiver).slice(0, -1));
+    const shifted = shiftFormationWithBall(tokens, from.x, receiver.x, receiver.player.id, state.half);
+    const landed = outcome === "failure" && interceptor ? interceptor.token : receiver;
+    const shiftedReceiver = shifted.find((token) => token.player.id === landed.player.id) ?? receiver;
+    ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
+    return { ...state, tokens: shifted, ball, score, turn: otherSide(side) };
+  }
+
+  if (action.kind === "shoot") {
+    const shooter = tokens.find((token) => token.player.id === action.tokenId);
+    if (!shooter) return state;
+    const goal = { x: tacticalGoalX(side, state.half), y: 5 };
+    if (outcome === "success") {
+      score[side === "home" ? 0 : 1] += 1;
+      const kickoff = resetKickoff(tokens, otherSide(side), state.half, state.smallSided);
+      return { ...state, tokens: kickoff.tokens, ball: kickoff.ball, score, turn: otherSide(side) };
+    }
+    const interceptor = findInterceptor(state.tokens, side, lineCells(shooter, goal));
+    if (interceptor && outcome === "failure") {
+      const blocker = tokens.find((token) => token.player.id === interceptor.token.player.id) ?? interceptor.token;
+      ball = { x: blocker.x, y: blocker.y };
+    } else {
+      ball = goal;
+    }
+    return { ...state, tokens, ball, score, turn: otherSide(side) };
+  }
+
+  if (action.kind === "steal") {
+    const defender = tokens.find((token) => token.player.id === action.tokenId);
+    if (!defender || !owner || outcome === "failure") {
+      return { ...state, tokens, ball, score, turn: otherSide(side) };
+    }
+    const landing = stealLanding(tokens, defender, owner, state.half);
+    defender.x = landing.x;
+    defender.y = landing.y;
+    const shifted = shiftFormationWithBall(tokens, ball.x, landing.x, defender.player.id, state.half);
+    const pushed = pushTeamUpfield(shifted, defender.side, state.half);
+    const shiftedDefender = pushed.find((token) => token.player.id === defender.player.id) ?? defender;
+    ball = { x: shiftedDefender.x, y: shiftedDefender.y };
+    return { ...state, tokens: pushed, ball, score, turn: otherSide(side) };
+  }
+
+  const keeper = tokens.find((token) => token.player.id === action.tokenId);
+  if (!keeper) return state;
+  const target = goalkeeperClearTarget(keeper, tokens, state.half);
+  const accuracy = goalkeeperClearAccuracy(keeper.player, distance(keeper, target));
+  const clearance = outcome === "success" || accuracy >= 50
+    ? target
+    : { x: cap(target.x + (keeper.side === "away" ? 1 : -1) * 2, 1, 20), y: cap(target.y + 1, 0, 10) };
+  ball = clearance;
+  return { ...state, tokens, ball, score, turn: otherSide(side) };
+};
+
+const minimaxValue = (
+  state: TacticalState,
+  depth: number,
+  alpha: number,
+  beta: number,
+  budget: { nodes: number },
+): number => {
+  budget.nodes -= 1;
+  if (depth <= 0 || budget.nodes <= 0) return tacticalEvaluation(state);
+  const actions = tacticalActionsFor(state, state.turn);
+  if (!actions.length) return tacticalEvaluation(state);
+
+  // Move ordering: try the positionally strongest child first. Good ordering
+  // is what makes alpha-beta prune most of the tree, just like the video.
+  const ordered = actions
+    .map((action) => ({ action, child: applyTacticalAction(state, action) }))
+    .map((entry) => ({ ...entry, score: tacticalEvaluation(entry.child) }))
+    .sort((a, b) => state.turn === "away" ? b.score - a.score : a.score - b.score);
+
+  if (state.turn === "away") {
+    let best = -Infinity;
+    for (const { child } of ordered) {
+      best = Math.max(best, minimaxValue(child, depth - 1, alpha, beta, budget));
+      alpha = Math.max(alpha, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  }
+  let best = Infinity;
+  for (const { child } of ordered) {
+    best = Math.min(best, minimaxValue(child, depth - 1, alpha, beta, budget));
+    beta = Math.min(beta, best);
+    if (beta <= alpha) break;
+  }
+  return best;
+};
+
+const minimaxDepthForDifficulty = (difficulty: number) => {
+  const level = cap(difficulty, 1, 100);
+  return level >= 90 ? 4 : level >= 60 ? 3 : level >= 25 ? 2 : 1;
+};
+
+// Pick the attacking option whose expected result is strongest after the
+// opponent's best minimax reply. Probability still matters: shots and passes
+// are valued with their block/interception risk, not as certain successes.
+const chooseAttackingActionWithMinimax = (
+  match: Match,
+  owner: Token,
+  options: AiActionOption[],
+  difficulty: number,
+) => {
+  if (!options.length) return undefined;
+  const level = cap(difficulty, 1, 100);
+  const depth = minimaxDepthForDifficulty(level);
+  if (depth <= 1 || options.length === 1) return pickAttackingAction(options, level);
+
+  const root: TacticalState = {
+    tokens: match.tokens.map((token) => ({ ...token })),
+    ball: { ...match.ball },
+    score: [match.score[0], match.score[1]],
+    turn: "away",
+    half: match.half,
+    smallSided: match.format === "small-sided",
+  };
+  const budget = { nodes: depth >= 4 ? 2200 : depth === 3 ? 1400 : 800 };
+  const valueOf = (child: TacticalState) => minimaxValue(child, depth - 1, -Infinity, Infinity, budget);
+  const goal = { x: tacticalGoalX(owner.side, match.half), y: 5 };
+  const goalDistance = ownGoalDistance(owner, match.half);
+  const shotChance = shotAccuracy(owner, match.tokens, goalDistance, shotAngleDegrees(owner, match.half)) / 100;
+  const shotInterceptor = findInterceptor(match.tokens, owner.side, lineCells(owner, goal));
+  const blockRisk = shotInterceptor
+    ? interceptionChance(shotInterceptor.token, "shot", shotInterceptor.gap) / 100 : 0;
+
+  const scored = options.map((option) => {
+    let value: number;
+    if (option.kind === "shoot") {
+      const shot = applyTacticalAction(root, { kind: "shoot", tokenId: owner.player.id }, "success");
+      const blocked = applyTacticalAction(root, { kind: "shoot", tokenId: owner.player.id }, "failure");
+      const wide = applyTacticalAction(root, { kind: "shoot", tokenId: owner.player.id }, "wide");
+      const onTarget = shotChance * valueOf(shot) + (1 - shotChance) * valueOf(wide);
+      value = blockRisk * valueOf(blocked) + (1 - blockRisk) * onTarget;
+    } else if (option.kind === "pass") {
+      const success = applyTacticalAction(root,
+        { kind: "pass", fromId: owner.player.id, toId: option.receiver.player.id }, "success");
+      const interceptor = findInterceptor(match.tokens, owner.side, lineCells(owner, option.receiver).slice(0, -1));
+      if (interceptor) {
+        const risk = interceptionChance(interceptor.token, "pass", interceptor.gap) / 100;
+        const failure = applyTacticalAction(root,
+          { kind: "pass", fromId: owner.player.id, toId: option.receiver.player.id }, "failure");
+        value = risk * valueOf(failure) + (1 - risk) * valueOf(success);
+      } else {
+        value = valueOf(success);
+      }
+    } else {
+      const carry = applyTacticalAction(root,
+        { kind: "move", tokenId: owner.player.id, x: option.move.x, y: option.move.y }, "success");
+      value = valueOf(carry);
+    }
+    // Keep a small slice of the evolved strategy's prior so the difficulty
+    // ladder still shapes personality and low levels stay a little noisier.
+    return { option, value: value + option.value * 40 };
+  });
+
+  return scored.sort((a, b) => b.value - a.value)[0].option;
+};
+
+type DefensiveChoice =
+  | { kind: "steal"; presser: Token }
+  | { kind: "move"; defender: Token; move: { x: number; y: number; score: number } };
+
+// The same minimax pass chooses between pressing the carrier and dropping a
+// defender into the shooting lane, so off-ball defending also looks one reply
+// ahead instead of only following its heuristic order.
+const chooseDefensiveActionWithMinimax = (
+  match: Match,
+  carrier: Token,
+  defensiveOptions: DefensiveMove[],
+  adjacentDefenders: Token[],
+  strategy: AiStrategy,
+  difficulty: number,
+): DefensiveChoice | undefined => {
+  const depth = minimaxDepthForDifficulty(difficulty);
+  if (depth <= 1) {
+    if (adjacentDefenders[0]) return { kind: "steal", presser: adjacentDefenders[0] };
+    const fallback = defensiveOptions[0];
+    return fallback ? { kind: "move", defender: fallback.defender, move: fallback.move } : undefined;
+  }
+
+  const root: TacticalState = {
+    tokens: match.tokens.map((token) => ({ ...token })),
+    ball: { ...match.ball },
+    score: [match.score[0], match.score[1]],
+    turn: "away",
+    half: match.half,
+    smallSided: match.format === "small-sided",
+  };
+  const budget = { nodes: depth >= 4 ? 1200 : depth === 3 ? 800 : 500 };
+  const valueOf = (child: TacticalState) => minimaxValue(child, depth - 1, -Infinity, Infinity, budget);
+  const choices: { choice: DefensiveChoice; value: number }[] = [];
+
+  for (const presser of adjacentDefenders.slice(0, 2)) {
+    const help = adjacentDefenders.filter((token) => token.player.id !== presser.player.id).length;
+    const chance = cap(stealChanceFor(presser, carrier, match.half)
+      + help * 3.5 + strategy.pressing * 3, 15, 78) / 100;
+    const success = applyTacticalAction(root, { kind: "steal", tokenId: presser.player.id }, "success");
+    const failure = applyTacticalAction(root, { kind: "steal", tokenId: presser.player.id }, "failure");
+    choices.push({
+      choice: { kind: "steal", presser },
+      value: chance * valueOf(success) + (1 - chance) * valueOf(failure),
+    });
+  }
+  for (const option of defensiveOptions.slice(0, 3)) {
+    const child = applyTacticalAction(root,
+      { kind: "move", tokenId: option.defender.player.id, x: option.move.x, y: option.move.y }, "success");
+    choices.push({
+      choice: { kind: "move", defender: option.defender, move: option.move },
+      value: valueOf(child),
+    });
+  }
+  return choices.sort((a, b) => b.value - a.value)[0]?.choice;
+};
+
 const campaignStageCount = 105;
 const campaignStageNames = [
   "Season Opener", "Rivalry Match", "Road Test", "Cup Qualifier", "Playoff Push",
@@ -1916,7 +2348,7 @@ function App() {
     } else if (owner) {
       const goalDistance = ownGoalDistance(owner, latest.half);
       const options = attackingActionOptions(owner, ai.tokens, ai, strategy);
-      const action = pickAttackingAction(options, aiDifficultyLevel);
+      const action = chooseAttackingActionWithMinimax(ai, owner, options, aiDifficultyLevel);
 
       if (action?.kind === "shoot") {
         const chance = shotAccuracy(owner, ai.tokens, goalDistance, shotAngleDegrees(owner, latest.half));
@@ -2007,7 +2439,11 @@ function App() {
         const adjacentDefenders = ai.tokens.filter((token) => token.side === "away"
           && token.player.position !== "GK" && adjacent(token, carrier))
           .sort((a, b) => stealChanceFor(b, carrier, ai.half) - stealChanceFor(a, carrier, ai.half));
-        const presser = adjacentDefenders[0] ?? defensiveOptions[0]?.defender;
+        const defensiveChoice = chooseDefensiveActionWithMinimax(ai, carrier, defensiveOptions,
+          ai.stealProtectedSide === "home" ? [] : adjacentDefenders, strategy, aiDifficultyLevel);
+        const chosenSteal = defensiveChoice?.kind === "steal" ? defensiveChoice.presser : undefined;
+        const chosenMove = defensiveChoice?.kind === "move" ? defensiveChoice : undefined;
+        const presser = chosenSteal ?? (!defensiveChoice ? adjacentDefenders[0] : undefined);
         if (presser && adjacent(presser, carrier)) {
           if (ai.stealProtectedSide === "home") {
             ai.message = "Your team keeps possession after the recent steal; the opposition cannot steal back immediately.";
@@ -2032,8 +2468,8 @@ function App() {
               ai.message = `${carrier.player.name} evades the opposition's ${help + 1}-player press (${Math.round(stealRoll.chance)}% chance).`;
             }
           }
-        } else if (defensiveOptions.length) {
-          const { defender, move } = defensiveOptions[0];
+        } else if (chosenMove || defensiveOptions.length) {
+          const { defender, move } = chosenMove ?? defensiveOptions[0];
           defender.x = move.x;
           defender.y = move.y;
           ai.message = strategy.pressing > 0.72
@@ -3051,8 +3487,8 @@ function App() {
           </button>
         </article>)}</div>
         <section className="settings-card ai-difficulty">
-          <div className="panel-heading"><h2>CPU difficulty · Level {aiDifficulty}</h2><span>{evolvedAi.generations} generations · {evolvedAi.population} genomes</span></div>
-          <p className="small-note" style={{ lineHeight: 1.7, margin: 0 }}>Each level is a genome from a teach → breed → mutate genetic algorithm. Level 1 is the weakest evolved strategy; level 100 is the validated champion. Higher levels also field stronger MLS players and evaluate every formation, including custom ones.</p>
+          <div className="panel-heading"><h2>CPU difficulty · Level {aiDifficulty}</h2><span>{evolvedAi.generations} generations · {evolvedAi.population} genomes · {minimaxDepthForDifficulty(aiDifficulty)}-ply minimax</span></div>
+          <p className="small-note" style={{ lineHeight: 1.7, margin: 0 }}>Each level is a genome from a teach → breed → mutate genetic algorithm. Level 1 is the weakest evolved strategy; level 100 is the validated champion. Higher levels also field stronger MLS players and evaluate every formation, including custom ones. From level 25 the attack adds a minimax search with alpha-beta pruning and move ordering, so it checks the opponent's best reply before choosing; the lookahead grows to four plies at level 90.</p>
           <input aria-label="CPU AI difficulty" type="range" min="1" max="100" step="1" value={aiDifficulty}
             onChange={(event) => setAiDifficulty(Number(event.target.value))} />
           <div className="ai-difficulty-scale"><span>1 · WEAKEST STRATEGY</span><span>100 · TOP STRATEGY</span></div>

@@ -1263,10 +1263,12 @@ const minimaxValue = (
   depth: number,
   alpha: number,
   beta: number,
-  budget: { nodes: number },
+  budget: { nodes: number; deadline: number },
 ): number => {
   budget.nodes -= 1;
-  if (depth <= 0 || budget.nodes <= 0) return tacticalEvaluation(state);
+  if (depth <= 0 || budget.nodes <= 0 || performance.now() >= budget.deadline) {
+    return tacticalEvaluation(state);
+  }
   const actions = tacticalActionsFor(state, state.turn);
   if (!actions.length) return tacticalEvaluation(state);
 
@@ -1322,7 +1324,10 @@ const chooseAttackingActionWithMinimax = (
     half: match.half,
     smallSided: match.format === "small-sided",
   };
-  const budget = { nodes: depth >= 4 ? 2200 : depth === 3 ? 1400 : 800 };
+  const budget = {
+    nodes: depth >= 4 ? 2200 : depth === 3 ? 1400 : 800,
+    deadline: performance.now() + 110,
+  };
   const valueOf = (child: TacticalState) => minimaxValue(child, depth - 1, -Infinity, Infinity, budget);
   const goal = { x: tacticalGoalX(owner.side, match.half), y: 5 };
   const goalDistance = ownGoalDistance(owner, match.half);
@@ -1394,7 +1399,10 @@ const chooseDefensiveActionWithMinimax = (
     half: match.half,
     smallSided: match.format === "small-sided",
   };
-  const budget = { nodes: depth >= 4 ? 1200 : depth === 3 ? 800 : 500 };
+  const budget = {
+    nodes: depth >= 4 ? 1200 : depth === 3 ? 800 : 500,
+    deadline: performance.now() + 85,
+  };
   const valueOf = (child: TacticalState) => minimaxValue(child, depth - 1, -Infinity, Infinity, budget);
   const choices: { choice: DefensiveChoice; value: number }[] = [];
 

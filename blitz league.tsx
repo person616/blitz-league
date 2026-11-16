@@ -31,6 +31,21 @@ type Player = {
   tacticalY?: number;
 };
 type Token = { player: Player; x: number; y: number; side: "home" | "away" };
+type PitchFxKind = "pass" | "goal" | "shoot" | "steal" | "intercept" | "miss" | "move";
+type PitchFx = {
+  id: number;
+  kind: PitchFxKind;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  label?: string;
+};
+type GoalBanner = { side: "home" | "away"; scorer: string };
+type TutorialGuide = {
+  title: string;
+  detail: string;
+  highlightTile?: { x: number; y: number };
+  highlightTokenId?: string;
+};
 type LuckTrack = { successes: number; attempts: number };
 type MatchLuck = { home: LuckTrack; away: LuckTrack };
 export type Match = {
@@ -256,7 +271,7 @@ const campaignFormatForStage = (stage: number): FormatId =>
   stage % 7 === 0 ? "golden-goal" : stage % 5 === 0 ? "small-sided" : "classic";
 const campaignFormatLabel = (stage: number) => formats.find((format) => format.id === campaignFormatForStage(stage))?.name ?? formats[0].name;
 const kitColors: KitColor[] = [
-  { id: "lime", name: "League Lime", value: "#b8f36b" },
+  { id: "lime", name: "Stadium Mint", value: "#8ff2c8" },
   { id: "coral", name: "Kickoff Coral", value: "#ec695e" },
   { id: "sky", name: "Sky Blue", value: "#65b9f4" },
   { id: "violet", name: "Violet", value: "#a68af6" },
@@ -1689,6 +1704,64 @@ function makeMatch(
   };
 }
 
+const tutorialStepCount = 5;
+
+function makeTutorialMatch(step: number, score: [number, number], players: Player[]): Match {
+  const squad = players.length ? players : roster.filter((player) => startingPlayers.includes(player.id));
+  const keeper = squad.find((player) => player.position === "GK") ?? squad[0];
+  const outfield = squad.filter((player) => player.id !== keeper.id);
+  const first = outfield[0] ?? squad[1] ?? keeper;
+  const second = outfield[1] ?? outfield[0] ?? keeper;
+  const training: Token[] = [
+    { player: { id: "drill-keeper", name: "Rookie Keeper", club: "Training XI", position: "GK", rating: 55, ability: "Practice goalie", abilityType: "goalkeeping", abilityStat: 52, clearing: 55, color: "#8fa8a0" }, x: 20, y: 4, side: "away" },
+    { player: { id: "drill-defender", name: "Training Defender", club: "Training XI", position: "DEF", rating: 55, ability: "Practice defender", abilityType: "defending", abilityStat: 52, color: "#8fa8a0" }, x: 14, y: 8, side: "away" },
+    { player: { id: "drill-forward", name: "Training Forward", club: "Training XI", position: "FWD", rating: 55, ability: "Practice striker", abilityType: "finishing", abilityStat: 52, color: "#8fa8a0" }, x: 10, y: 5, side: "away" },
+  ];
+  const tokens: Token[] = step === 4
+    ? [
+      { player: keeper, x: 1, y: 5, side: "home" },
+      { player: first, x: 9, y: 5, side: "home" },
+      { player: second, x: 15, y: 3, side: "home" },
+      { ...training[0], x: 20, y: 4 },
+      { ...training[1], x: 15, y: 8 },
+      { ...training[2], x: 10, y: 5 },
+    ]
+    : [
+      { player: keeper, x: 1, y: 5, side: "home" },
+      { player: first, x: 8, y: 5, side: "home" },
+      { player: second, x: 14, y: 5, side: "home" },
+      { ...training[0], x: 20, y: 4 },
+      { ...training[1], x: 13, y: 1 },
+      { ...training[2], x: 11, y: 9 },
+    ];
+  const ball = step === 4 ? { x: 10, y: 5 } : { x: 8, y: 5 };
+  const message = step === 4
+    ? "Step 4 of 5 · An opponent has the ball right next to you. Click STEAL, or tap their player."
+    : step === 5
+      ? "Step 5 of 5 · You're ready. Move, pass and shoot to score one more goal."
+      : "Welcome to the drill. Step 1 of 5 · Click the glowing tile ahead to move with the ball.";
+  return {
+    format: "small-sided",
+    formationId: defaultFormation.id,
+    tokens,
+    ball,
+    turn: "home",
+    score,
+    minute: 1,
+    half: 1,
+    halftime: false,
+    selected: first.id,
+    message,
+    campaignStage: 1,
+    extraAwayTurns: 0,
+    drivesUsed: 0,
+    actionsUsed: 0,
+    bonusDrives: 0,
+    bonusActions: 0,
+    luck: emptyLuck(),
+  };
+}
+
 function App() {
   const devToolsEnabled = import.meta.env.DEV
     && new URLSearchParams(window.location.search).get("blitz-dev") === "tools";
@@ -1721,7 +1794,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
   const [quickplaySide, setQuickplaySide] = useState<"home" | "away" | null>(null);
-  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | null>(null);
+  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | "tutorial" | null>(null);
   const [joinRoomCode, setJoinRoomCode] = useState("");
   const [onlineRoomCode, setOnlineRoomCode] = useState("");
   const [onlineStatus, setOnlineStatus] = useState("");
@@ -1736,6 +1809,17 @@ function App() {
   const [captionText, setCaptionText] = useState("");
   const [endTurnKey, setEndTurnKey] = useState<string | null>("Enter");
   const [capturingEndTurnKey, setCapturingEndTurnKey] = useState(false);
+  const [pitchFx, setPitchFx] = useState<PitchFx | null>(null);
+  const [goalBanner, setGoalBanner] = useState<GoalBanner | null>(null);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [tutorialComplete, setTutorialComplete] = useState(false);
+  const [tutorialCompleted, setTutorialCompleted] = useState(false);
+  const pitchFxTimer = useRef<number | undefined>(undefined);
+  const goalBannerTimer = useRef<number | undefined>(undefined);
+  const tutorialCompleteTimer = useRef<number | undefined>(undefined);
+  const tutorialLive = useRef(false);
+  const previousScore = useRef<[number, number]>([0, 0]);
+  const pendingScorer = useRef<{ side: "home" | "away"; name: string } | null>(null);
   const latestMatch = useRef(match);
   const onlineSocket = useRef<WebSocket | null>(null);
   const remoteMatchUpdate = useRef(false);
@@ -1939,7 +2023,7 @@ function App() {
       const saved = window.localStorage.getItem("blitz-league-save")
         ?? window.localStorage.getItem("soccer-baseboard-save");
       if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; aiDifficulty?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean };
+        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; aiDifficulty?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean; tutorialCompleted?: boolean };
         if (data.progressionVersion !== currentSaveVersion) {
           window.localStorage.removeItem("soccer-baseboard-save");
           setNotice("Blitz League has started a fresh season. Your regular starting squad is ready.");
@@ -2003,6 +2087,7 @@ function App() {
         }
         if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
         if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
+        if (typeof data.tutorialCompleted === "boolean") setTutorialCompleted(data.tutorialCompleted);
         if (typeof data.endTurnKey === "string" || data.endTurnKey === null) setEndTurnKey(data.endTurnKey);
         else if (data.enterEndsTurn === false) setEndTurnKey(null);
       }
@@ -2019,11 +2104,11 @@ function App() {
       xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedFormations,
       activeFormationId, formationAssignments, unlockedTeamColors, homeKitColorId, awayKitColorId,
       dailyOfferPurchases, activeFormat, level, aiDifficulty,
-      captionsEnabled, captionSize, endTurnKey,
+      captionsEnabled, captionSize, endTurnKey, tutorialCompleted,
     }));
   }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
     unlockedFormations, activeFormationId, formationAssignments, dailyOfferPurchases, activeFormat, level, aiDifficulty,
-    captionsEnabled, captionSize, endTurnKey, saveReady, devToolsEnabled]);
+    captionsEnabled, captionSize, endTurnKey, tutorialCompleted, saveReady, devToolsEnabled]);
 
   useEffect(() => {
     if (screen !== "store") return;
@@ -2058,7 +2143,7 @@ function App() {
   useEffect(() => () => onlineSocket.current?.close(), []);
 
   useEffect(() => {
-    if (screen !== "match" || match.finished || match.halftime) return;
+    if (screen !== "match" || match.finished || match.halftime || tutorialStep > 0) return;
     const timer = window.setInterval(() => {
       setMatch((current) => {
         if (current.finished || current.halftime || current.minute >= 90) return current;
@@ -2085,7 +2170,7 @@ function App() {
       });
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [screen, match.finished, match.halftime, matchIsSmallSided]);
+  }, [screen, match.finished, match.halftime, matchIsSmallSided, tutorialStep]);
 
   useEffect(() => {
     if (match.message === lastCaptionMessage.current) return;
@@ -2110,7 +2195,81 @@ function App() {
     }
   }, [showOnlineSetup]);
 
+  useEffect(() => {
+    const previous = previousScore.current;
+    previousScore.current = match.score;
+    const homeDelta = match.score[0] - previous[0];
+    const awayDelta = match.score[1] - previous[1];
+    if (homeDelta <= 0 && awayDelta <= 0) return;
+    const side = homeDelta > 0 ? "home" : "away";
+    const scorer = pendingScorer.current?.name ?? (side === "home" ? "Your team" : "The opposition");
+    pendingScorer.current = null;
+    celebrateGoal(side, scorer);
+  }, [match.score]);
+
+  useEffect(() => {
+    tutorialLive.current = screen === "match" && quickplayMode === "tutorial";
+  }, [screen, quickplayMode]);
+
+  useEffect(() => () => {
+    window.clearTimeout(pitchFxTimer.current);
+    window.clearTimeout(goalBannerTimer.current);
+    window.clearTimeout(tutorialCompleteTimer.current);
+  }, []);
+
+  function playPitchFx(kind: PitchFxKind, to: { x: number; y: number }, label?: string, from?: { x: number; y: number }) {
+    window.clearTimeout(pitchFxTimer.current);
+    setPitchFx({ id: Date.now() + Math.random(), kind, from: from ?? to, to, label });
+    pitchFxTimer.current = window.setTimeout(() => setPitchFx(null), 1150);
+  }
+
+  function celebrateGoal(side: "home" | "away", scorer: string) {
+    window.clearTimeout(goalBannerTimer.current);
+    setGoalBanner({ side, scorer });
+    goalBannerTimer.current = window.setTimeout(() => setGoalBanner(null), 1900);
+  }
+
+  function startTutorial() {
+    window.clearTimeout(tutorialCompleteTimer.current);
+    stopQuickplay();
+    setPassMode(false);
+    setTutorialComplete(false);
+    setTutorialStep(1);
+    setQuickplayMode("tutorial");
+    const drill = makeTutorialMatch(1, [0, 0], homePlayers);
+    previousScore.current = drill.score;
+    setMatch(drill);
+    setScreen("match");
+  }
+
+  function exitTutorial() {
+    window.clearTimeout(tutorialCompleteTimer.current);
+    stopQuickplay();
+    setTutorialStep(0);
+    setTutorialComplete(false);
+    setGoalBanner(null);
+    setPitchFx(null);
+    setMatchFullscreen(false);
+    setScreen("home");
+  }
+
+  function completeTutorial() {
+    if (!tutorialLive.current) return;
+    setTutorialStep(0);
+    setGoalBanner(null);
+    setPitchFx(null);
+    setTutorialComplete(true);
+    if (tutorialCompleted) return;
+    setTutorialCompleted(true);
+    setXp((value) => value + 150);
+    setCoins((value) => value + 50);
+    const nextPassLevel = passLevelForXp(xp + 150);
+    setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(nextPassLevel)])]);
+    setNotice("Tutorial complete · +150 XP · +50 coins");
+  }
+
   function stopQuickplay() {
+    window.clearTimeout(tutorialCompleteTimer.current);
     onlineSocket.current?.close();
     onlineSocket.current = null;
     setOnlineSide(null);
@@ -2119,6 +2278,10 @@ function App() {
     setOnlineStatus("");
     lastOnlineMatch.current = null;
     setQuickplaySide(null);
+    setTutorialStep(0);
+    setTutorialComplete(false);
+    setGoalBanner(null);
+    setPitchFx(null);
     setQuickplayMode(null);
   }
 
@@ -2262,6 +2425,19 @@ function App() {
 
   function endTurn(current: Match) {
     setPassMode(false);
+    if (tutorialStep > 0) {
+      setMatch({
+        ...current,
+        turn: "home",
+        selected: closestPlayerId(current.tokens, current.ball, "home"),
+        drivesUsed: 0,
+        actionsUsed: 0,
+        bonusDrives: 0,
+        bonusActions: 0,
+        message: "Practice drill · the ball stays with you. Move again, or pass and shoot when you're ready.",
+      });
+      return;
+    }
     const next = { ...current, turn: current.turn === "home" ? "away" as const : "home" as const };
     if (current.stealProtectedSide && current.turn !== current.stealProtectedSide) {
       next.stealProtectedSide = undefined;
@@ -2374,6 +2550,7 @@ function App() {
           ai.stealProtectedSide = undefined;
           ai.message = `${interception!.token.player.name} blocks the opposition's shot and intercepts the ball!`;
         } else if (shot?.success) {
+          pendingScorer.current = { side: "away", name: owner.player.name };
           ai.score = [ai.score[0], ai.score[1] + 1];
           const kickoff = resetKickoff(ai.tokens, "home", ai.half, matchIsSmallSided);
           ai.tokens = kickoff.tokens;
@@ -2684,6 +2861,19 @@ function App() {
       updated.ball = { x, y };
       if (updated.stealProtectedSide === player.side) updated.stealProtectedSide = undefined;
     }
+    if (steps >= 2) playPitchFx(hasBall ? "pass" : "move", { x, y }, undefined, { x: player.x, y: player.y });
+    if (tutorialStep === 1) {
+      setTutorialStep(2);
+      setMatch({
+        ...updated,
+        drivesUsed: 0,
+        actionsUsed: 0,
+        bonusDrives: 0,
+        bonusActions: 0,
+        message: "Nice move! Step 2 · Click PASS, then tap your glowing striker ahead.",
+      });
+      return;
+    }
     if (hasBall && ownGoalDistance({ ...player, x }, match.half) === 0) {
       updated.ball = { x, y };
       updated.message = "You're at the goal! Shoot now.";
@@ -2717,11 +2907,40 @@ function App() {
     }
     recordPlayerAction("shots");
     const angle = shotAngleDegrees(player, match.half);
-    const accuracy = shotAccuracy(player, match.tokens, dist, angle);
+    const baseAccuracy = shotAccuracy(player, match.tokens, dist, angle);
+    const accuracy = baseAccuracy;
     const goal = {
       x: player.side === "home" ? (match.half === 1 ? 21 : 0) : (match.half === 1 ? 0 : 21),
       y: 5,
     };
+    if (tutorialStep === 3) {
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      const drill = makeTutorialMatch(4, [match.score[0] + 1, match.score[1]], homePlayers);
+      previousScore.current = drill.score;
+      celebrateGoal(player.side, player.player.name);
+      setTutorialStep(4);
+      setMatch(drill);
+      return;
+    }
+    if (tutorialStep === 5) {
+      const score: [number, number] = [match.score[0] + 1, match.score[1]];
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      celebrateGoal(player.side, player.player.name);
+      previousScore.current = score;
+      setMatch({
+        ...match,
+        score,
+        ball: goal,
+        finished: true,
+        drivesUsed: 0,
+        actionsUsed: 0,
+        bonusDrives: 0,
+        bonusActions: 0,
+        message: `GOAL! ${player.player.name} buries it — tutorial complete!`,
+      });
+      tutorialCompleteTimer.current = window.setTimeout(completeTutorial, 1200);
+      return;
+    }
     const shotPath = lineCells(player, goal);
     const interception = findInterceptor(match.tokens, player.side, shotPath);
     const opponentSide = player.side === "home" ? "away" : "home";
@@ -2731,6 +2950,7 @@ function App() {
     if (block?.success) {
       const tokens = shiftFormationWithBall(block.match.tokens, match.ball.x, interception!.token.x, interception!.token.player.id, match.half);
       const shiftedBlocker = tokens.find((token) => token.player.id === interception!.token.player.id) ?? interception!.token;
+      playPitchFx("intercept", { x: shiftedBlocker.x, y: shiftedBlocker.y }, "BLOCKED!", { x: player.x, y: player.y });
       endTurn({
         ...block.match,
         tokens,
@@ -2744,6 +2964,8 @@ function App() {
     const shot = rollLuck(block?.match ?? match, player.side, opponentSide, accuracy);
     const shotChance = Math.round(shot.chance);
     if (shot.success) {
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      pendingScorer.current = { side: player.side, name: player.player.name };
       if (quickplaySide !== null) {
         const kickoffSide = player.side === "home" ? "away" : "home";
         const kickoff = resetKickoff(shot.match.tokens, kickoffSide, match.half, matchIsSmallSided);
@@ -2783,6 +3005,7 @@ function App() {
       } else setMatch(finished);
     } else {
       const tokens = shiftFormationWithBall(shot.match.tokens, match.ball.x, goal.x, player.player.id, match.half);
+      playPitchFx("miss", goal, "WIDE!", { x: player.x, y: player.y });
       const updated = {
         ...shot.match,
         tokens,
@@ -2802,7 +3025,9 @@ function App() {
       setMatch({ ...match, message: "Select your goalkeeper with the ball inside your penalty box to clear." });
       return;
     }
-    endTurn(resolveGoalkeeperClearance(match, keeper));
+    const clearance = resolveGoalkeeperClearance(match, keeper);
+    playPitchFx("pass", clearance.ball, "CLEARED!", { x: keeper.x, y: keeper.y });
+    endTurn(clearance);
   }
 
   function pass() {
@@ -2821,7 +3046,7 @@ function App() {
       setMatch({ ...match, message: "Your action is used. Complete your drive or end the turn." });
       return;
     }
-    const passRange = passingRange(player.player);
+    const passRange = tutorialStep === 2 ? Math.max(14, passingRange(player.player)) : passingRange(player.player);
     const receivers = match.tokens.filter((token) =>
       token.side === player.side
       && token.player.id !== player.player.id
@@ -2847,7 +3072,7 @@ function App() {
       setMatch({ ...match, message: "That pass is no longer available. Select the ball carrier and try again." });
       return;
     }
-    const passRange = passingRange(player.player);
+    const passRange = tutorialStep === 2 ? Math.max(14, passingRange(player.player)) : passingRange(player.player);
     if (distance(player, receiver) > passRange) {
       setPassMode(false);
       setMatch({ ...match, message: `That teammate is outside passing range (${passRange} tiles).` });
@@ -2855,6 +3080,26 @@ function App() {
     }
     const interceptionPath = lineCells(player, receiver).slice(0, -1);
     recordPlayerAction("passes");
+    if (tutorialStep === 2) {
+      const tokens = shiftFormationWithBall(match.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
+      const shiftedReceiver = tokens.find((token) => token.player.id === receiver.player.id) ?? receiver;
+      playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, "PASS!", { x: player.x, y: player.y });
+      setPassMode(false);
+      setTutorialStep(3);
+      setMatch({
+        ...match,
+        tokens,
+        ball: { x: shiftedReceiver.x, y: shiftedReceiver.y },
+        selected: receiver.player.id,
+        drivesUsed: 0,
+        actionsUsed: 0,
+        bonusDrives: 0,
+        bonusActions: 0,
+        stealProtectedSide: undefined,
+        message: "Great pass! Step 3 · Click SHOOT, or tap the glowing goal net to score.",
+      });
+      return;
+    }
     const interceptor = findInterceptor(match.tokens, player.side, interceptionPath);
     const passRoll = interceptor
       ? rollLuck(match, interceptor.token.side, player.side, interceptionChance(interceptor.token, "pass", interceptor.gap))
@@ -2862,6 +3107,7 @@ function App() {
     if (passRoll?.success) {
       const tokens = shiftFormationWithBall(passRoll.match.tokens, match.ball.x, interceptor!.token.x, interceptor!.token.player.id, match.half);
       const shiftedInterceptor = tokens.find((token) => token.player.id === interceptor!.token.player.id) ?? interceptor!.token;
+      playPitchFx("intercept", { x: shiftedInterceptor.x, y: shiftedInterceptor.y }, "INTERCEPTED!", { x: player.x, y: player.y });
       const updated = {
         ...passRoll.match,
         tokens,
@@ -2877,6 +3123,7 @@ function App() {
     const passBase = passRoll?.match ?? match;
     const tokens = shiftFormationWithBall(passBase.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
     const shiftedReceiver = tokens.find((token) => token.player.id === receiver.player.id) ?? receiver;
+    playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, distance(player, receiver) >= 4 ? "GREAT BALL!" : "PASS!", { x: player.x, y: player.y });
     const updated = { ...passBase, tokens, ball: { x: shiftedReceiver.x, y: shiftedReceiver.y }, selected: receiver.player.id, stealProtectedSide: undefined, message: `Pass completed to ${receiver.player.name}; both teams shift with the ball.` };
     setPassMode(false);
     spendAction(updated, updated.message);
@@ -2899,7 +3146,9 @@ function App() {
       return;
     }
     const chance = stealChanceFor(defender, carrier, match.half);
-    const stealRoll = rollLuck(match, defender.side, carrier.side, chance);
+    const stealRoll = tutorialStep === 4
+      ? { success: true, chance: 100, match }
+      : rollLuck(match, defender.side, carrier.side, chance);
     if (stealRoll.success) {
       const landing = stealLanding(stealRoll.match.tokens, defender, carrier, match.half);
       let tokens = stealRoll.match.tokens.map((token) => token.player.id === defender.player.id
@@ -2908,6 +3157,23 @@ function App() {
       tokens = shiftFormationWithBall(tokens, match.ball.x, landing.x, defender.player.id, match.half);
       tokens = pushTeamUpfield(tokens, defender.side, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
+      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "STOLEN!", { x: defender.x, y: defender.y });
+      if (tutorialStep === 4) {
+        setTutorialStep(5);
+        setMatch({
+          ...stealRoll.match,
+          tokens,
+          ball: { x: shiftedDefender.x, y: shiftedDefender.y },
+          selected: defender.player.id,
+          drivesUsed: 0,
+          actionsUsed: 0,
+          bonusDrives: 0,
+          bonusActions: 0,
+          stealProtectedSide: defender.side,
+          message: "Clean steal! Final step (5/5) · Move, pass and shoot to score one more goal.",
+        });
+        return;
+      }
       const updated = {
         ...stealRoll.match,
         tokens,
@@ -2967,11 +3233,13 @@ function App() {
       updated.tokens = shiftFormationWithBall(updated.tokens, match.ball.x, nx, player.player.id, match.half);
       const shiftedCarrier = updated.tokens.find((token) => token.player.id === player.player.id);
       if (shiftedCarrier) updated.ball = { x: shiftedCarrier.x, y: shiftedCarrier.y };
+      playPitchFx("pass", updated.ball, "NUTMEG!", { x: player.x, y: player.y });
       spendAction(updated, `${player.player.name} nutmegs ${defender.player.name}! ${Math.round(nutmegRoll.chance)}% odds — bonus drive and action earned.`, true);
     } else {
       const opponentSide = player.side === "home" ? "away" : "home";
       const tokens = shiftFormationWithBall(nutmegRoll.match.tokens, match.ball.x, defender.x, defender.player.id, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
+      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "TACKLED!", { x: player.x, y: player.y });
       setMatch({
         ...nutmegRoll.match,
         tokens,
@@ -3006,6 +3274,14 @@ function App() {
       nutmeg();
       return;
     }
+    if (token && ownTurn && canSteal && token.player.id === opposingCarrier?.player.id) {
+      steal();
+      return;
+    }
+    if (!token && ownTurn && canShoot && x === attackingGoalX && y >= 4 && y <= 6) {
+      shoot();
+      return;
+    }
     if (ownTurn && availableMoveKeys.has(`${x},${y}`)) {
       moveTo(x, y);
       return;
@@ -3023,15 +3299,20 @@ function App() {
   const activeSide = activeSideForClient();
   const ownTurn = match.turn === activeSide && !match.finished && !match.halftime
     && (quickplayMode !== "online" || onlineReady);
+  const attackingGoalX = activeSide === "home" ? (match.half === 1 ? 21 : 0) : (match.half === 1 ? 0 : 21);
   const movementRange = selectedPlayer ? 2 + movementBonus(selectedPlayer.player) : 0;
-  const passReach = selectedPlayer ? passingRange(selectedPlayer.player) : 5;
+  const passReach = selectedPlayer
+    ? (tutorialStep === 2 ? Math.max(14, passingRange(selectedPlayer.player)) : passingRange(selectedPlayer.player))
+    : 5;
   const eligiblePassIds = new Set(
     selectedPlayer && ownTurn && selectedPlayer.side === activeSide
       && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y
       && match.actionsUsed < 1 + match.bonusActions
       ? match.tokens.filter((token) => token.side === selectedPlayer.side
         && token.player.id !== selectedPlayer.player.id
-        && distance(selectedPlayer, token) <= passReach).map((token) => token.player.id)
+        && distance(selectedPlayer, token) <= passReach
+        && (tutorialStep !== 2 || ownGoalDistance(token, match.half) < ownGoalDistance(selectedPlayer, match.half)))
+        .map((token) => token.player.id)
       : [],
   );
   const occupiedKeys = new Set(match.tokens.map((token) => `${token.x},${token.y}`));
@@ -3078,20 +3359,53 @@ function App() {
     && selectedPlayer.side === activeSide && adjacent(selectedPlayer, opposingCarrier)
     && match.stealProtectedSide !== opposingCarrier.side;
   const selectedOpponentSide = selectedPlayer?.side === "home" ? "away" : "home";
-  const displayedShotChance = selectedPlayer && canShoot
-    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide,
-      shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half),
-        shotAngleDegrees(selectedPlayer, match.half)))
-    : 0;
+  const displayedShotChance = tutorialStep === 3 || tutorialStep === 5
+    ? 100
+    : selectedPlayer && canShoot
+      ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide,
+        shotAccuracy(selectedPlayer, match.tokens, ownGoalDistance(selectedPlayer, match.half),
+          shotAngleDegrees(selectedPlayer, match.half)))
+      : 0;
   const displayedClearChance = selectedPlayer
     ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, clearAccuracy)
     : 0;
   const displayedNutmegChance = selectedPlayer
     ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, nutmegChance(selectedPlayer.player))
     : 0;
-  const displayedStealChance = selectedPlayer && opposingCarrier
-    ? luckAdjustedChance(match, selectedPlayer.side, opposingCarrier.side, stealChance)
-    : 50;
+  const displayedStealChance = tutorialStep === 4
+    ? 100
+    : selectedPlayer && opposingCarrier
+      ? luckAdjustedChance(match, selectedPlayer.side, opposingCarrier.side, stealChance)
+      : 50;
+  const tutorialGuide: TutorialGuide | null = tutorialStep === 1
+    ? {
+      title: "Step 1 of 5 · Move into space",
+      detail: "Tap the glowing mint tile ahead (or any highlighted dot) to dribble forward with the ball.",
+      highlightTile: { x: 10, y: 5 },
+    }
+    : tutorialStep === 2
+      ? {
+        title: "Step 2 of 5 · Pass to a teammate",
+        detail: "Click PASS, then tap your open striker ahead to complete the pass.",
+      }
+      : tutorialStep === 3
+        ? {
+          title: "Step 3 of 5 · Score a goal",
+          detail: "You're in shooting range. Click SHOOT, or tap the glowing goal net.",
+          highlightTile: { x: 21, y: 5 },
+        }
+        : tutorialStep === 4
+          ? {
+            title: "Step 4 of 5 · Win the ball back",
+            detail: "An opponent has the ball right next to you. Click STEAL, or tap their player.",
+            highlightTokenId: opposingCarrier?.player.id,
+          }
+          : tutorialStep === 5
+            ? {
+              title: "Step 5 of 5 · Score one more",
+              detail: "Move upfield into shooting range, then click SHOOT to finish the drill (+150 XP & +50 coins).",
+            }
+            : null;
   const homeLuck = luckPercent(match.luck.home);
   const awayLuck = luckPercent(match.luck.away);
   const luckChecks = Math.max(match.luck.home.attempts, match.luck.away.attempts);
@@ -3131,93 +3445,154 @@ function App() {
     <main className={`app-shell ${matchFullscreen && screen === "match" ? "match-fullscreen" : ""}`}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
-        *{box-sizing:border-box} body{margin:0;background:#0d1110;color:#f1f3ed;font-family:Manrope,Arial,sans-serif}
-        button{font:inherit;color:inherit;border:0;cursor:pointer}.app-shell{min-height:100vh;background:radial-gradient(ellipse at 52% -20%,#21352a 0%,#111714 45%,#0d1110 78%);padding:0 30px 50px}
+        *{box-sizing:border-box} body{margin:0;background:#0b1512;color:#eafaf4;font-family:Manrope,Arial,sans-serif}
+        button{font:inherit;color:inherit;border:0;cursor:pointer}.app-shell{min-height:100vh;background:radial-gradient(ellipse at 52% -20%,#173b31 0%,#0d1a16 45%,#0b1512 78%);padding:0 30px 50px}
         .topbar{height:76px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #ffffff13;max-width:1380px;margin:auto}
-        .brand{display:flex;gap:11px;align-items:center;font-weight:800;letter-spacing:.06em}.brand-mark{width:34px;height:34px;border-radius:10px;background:#b8f36b;color:#13200d;display:grid;place-items:center;font-size:19px}
-        .brand small{display:block;font-family:'DM Mono',monospace;font-weight:400;font-size:9px;color:#929b91;letter-spacing:.16em;margin-top:2px}
-        .nav{display:flex;gap:7px}.nav button,.ghost-btn{background:transparent;color:#aab3aa;padding:10px 14px;border-radius:9px;font-size:12px;font-weight:700}.nav button:hover,.nav button.active{background:#ffffff0c;color:#b8f36b}
-        .wallet{display:flex;gap:9px;align-items:center;font-family:'DM Mono',monospace;font-size:12px}.coin{color:#d7f583}.xp-pill{color:#9ca89d;border-left:1px solid #ffffff22;padding-left:12px}
-        .content{max-width:1280px;margin:0 auto}.eyebrow{font:500 10px 'DM Mono',monospace;letter-spacing:.2em;color:#b8f36b;text-transform:uppercase}
-        h1{font-size:clamp(32px,4vw,52px);letter-spacing:-.055em;line-height:1.02;margin:13px 0 12px}.subtitle{color:#929c93;font-size:14px;line-height:1.7;max-width:550px;margin:0}
+        .brand{display:flex;gap:11px;align-items:center;font-weight:800;letter-spacing:.06em}.brand-mark{width:34px;height:34px;border-radius:10px;background:#8ff2c8;color:#0a241c;display:grid;place-items:center;font-size:19px}
+        .brand small{display:block;font-family:'DM Mono',monospace;font-weight:400;font-size:9px;color:#93a9a0;letter-spacing:.16em;margin-top:2px}
+        .nav{display:flex;gap:7px;flex-wrap:wrap}.nav button,.ghost-btn{background:transparent;color:#aebfb6;padding:10px 14px;border-radius:9px;font-size:12px;font-weight:700}.nav button:hover,.nav button.active{background:#ffffff0c;color:#8ff2c8}
+        .wallet{display:flex;gap:9px;align-items:center;font-family:'DM Mono',monospace;font-size:12px}.coin{color:#b9ffe4}.xp-pill{color:#9fb5ab;border-left:1px solid #ffffff22;padding-left:12px}
+        .content{max-width:1280px;margin:0 auto}.eyebrow{font:500 10px 'DM Mono',monospace;letter-spacing:.2em;color:#8ff2c8;text-transform:uppercase}
+        h1{font-size:clamp(32px,4vw,52px);letter-spacing:-.055em;line-height:1.02;margin:13px 0 12px}.subtitle{color:#93a9a0;font-size:14px;line-height:1.7;max-width:550px;margin:0}
         .hero{padding:58px 0 38px;display:flex;justify-content:space-between;align-items:end;gap:25px}.hero-cta{display:flex;gap:10px}
-        .primary{background:#b8f36b;color:#14200f;padding:13px 19px;border-radius:9px;font-weight:800;font-size:12px;box-shadow:0 6px 25px #b8f36b1c}.primary:hover{background:#c9ff83;transform:translateY(-1px)}.primary:disabled{opacity:.52;cursor:not-allowed;box-shadow:none}
+        .primary{background:#8ff2c8;color:#0a241c;padding:13px 19px;border-radius:9px;font-weight:800;font-size:12px;box-shadow:0 6px 25px #8ff2c81c}.primary:hover{background:#a9ffdc;transform:translateY(-1px)}.primary:disabled{opacity:.52;cursor:not-allowed;box-shadow:none}
         .secondary{background:#ffffff0b;border:1px solid #ffffff15;padding:12px 17px;border-radius:9px;font-size:12px;font-weight:700}.secondary:hover{background:#ffffff14}
-        .home-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.panel{background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}
-        .panel-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:19px}.panel-heading h2{font-size:14px;margin:0;letter-spacing:-.02em}.panel-heading span{font:10px 'DM Mono',monospace;color:#879188;text-transform:uppercase;letter-spacing:.1em}
-        .campaign-card{background:linear-gradient(120deg,#1e2a20,#17201b);border:1px solid #b8f36b21;border-radius:12px;padding:19px;display:flex;justify-content:space-between;align-items:center;margin-bottom:17px}
-        .campaign-card strong{font-size:14px}.campaign-card p{font-size:11px;color:#919d92;margin:5px 0 0}.badge{background:#b8f36b18;color:#b8f36b;border-radius:100px;padding:6px 9px;font:10px 'DM Mono',monospace}
-        .progress-track{height:5px;background:#ffffff12;border-radius:10px;overflow:hidden;margin:14px 0 7px}.progress-fill{height:100%;background:#b8f36b;border-radius:10px;transition:width .25s}.small-note{font:10px 'DM Mono',monospace;color:#89938b}
+        .home-grid{display:grid;grid-template-columns:1.25fr .75fr;gap:18px}.panel{background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:22px}
+        .panel-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:19px}.panel-heading h2{font-size:14px;margin:0;letter-spacing:-.02em}.panel-heading span{font:10px 'DM Mono',monospace;color:#8ba39a;text-transform:uppercase;letter-spacing:.1em}
+        .campaign-card{background:linear-gradient(120deg,#1a352b,#12241d);border:1px solid #8ff2c821;border-radius:12px;padding:19px;display:flex;justify-content:space-between;align-items:center;margin-bottom:17px}
+        .campaign-card strong{font-size:14px}.campaign-card p{font-size:11px;color:#919d92;margin:5px 0 0}.badge{background:#8ff2c818;color:#8ff2c8;border-radius:100px;padding:6px 9px;font:10px 'DM Mono',monospace}
+        .progress-track{height:5px;background:#ffffff12;border-radius:10px;overflow:hidden;margin:14px 0 7px}.progress-fill{height:100%;background:#8ff2c8;border-radius:10px;transition:width .25s}.small-note{font:10px 'DM Mono',monospace;color:#8da59b}
         .player-list{display:grid;grid-template-columns:1fr 1fr;gap:9px}.player-chip{border:1px solid #ffffff10;background:#ffffff04;border-radius:10px;padding:11px;display:flex;gap:9px;align-items:center}.player-avatar{width:31px;height:31px;flex:none;border-radius:9px;display:grid;place-items:center;color:#111;font:700 10px 'DM Mono',monospace}
-        .player-chip b{font-size:10px;display:block}.player-chip small{font-size:9px;color:#8e998f}.rating{margin-left:auto;color:#c7d2c8;font:10px 'DM Mono',monospace}
-        .pass-track{display:flex;gap:8px;overflow:hidden}.reward{min-width:88px;flex:1;border:1px solid #ffffff12;border-radius:10px;background:#ffffff04;text-align:center;padding:12px 6px}.reward .reward-icon{font-size:19px;margin-bottom:8px}.reward b{display:block;font:10px 'DM Mono',monospace}.reward small{color:#89938b;font-size:9px}
-        .reward.unlocked{border-color:#b8f36b46;background:#b8f36b0a}.reward.locked{opacity:.48}
-        .match-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:17px;align-items:start;padding-top:26px}.match-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.scorebox{text-align:center}.scorebox strong{font:700 25px 'DM Mono',monospace;letter-spacing:.08em}.scorebox small{display:block;color:#8d998e;font:9px 'DM Mono',monospace;margin-top:5px;text-transform:uppercase;letter-spacing:.15em}.match-clock{display:block;color:#d7f583;font:700 13px 'DM Mono',monospace;margin-top:5px}.halftime-panel{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#1d2b20;border:1px solid #b8f36b55;border-radius:10px;padding:13px 16px;margin-bottom:12px}.halftime-panel strong{font-size:13px}.halftime-panel small{display:block;color:#a6b0a5;font-size:10px;margin-top:4px}
-        .pitch-wrap{padding:12px;background:#131a16;border:1px solid #ffffff14;border-radius:14px}.pitch-viewport{width:100%;aspect-ratio:22/11;overflow:hidden;position:relative;border-radius:8px;background:#244c35;container-type:inline-size}.pitch{width:140%;height:auto;aspect-ratio:22/11;display:grid;grid-template-columns:repeat(22,1fr);grid-template-rows:repeat(11,1fr);position:relative;overflow:hidden;border-radius:8px;background:repeating-linear-gradient(90deg,#244c35 0%,#244c35 10%,#28543a 10%,#28543a 20%);border:1px solid #b9e4bb50;transition:transform .35s ease}
-        .pitch:before{content:"";position:absolute;top:0;bottom:0;left:50%;border-left:1px solid #d7eed266;z-index:1;pointer-events:none}.pitch:after{content:"";position:absolute;left:50%;top:50%;width:15%;aspect-ratio:1;border:1px solid #d7eed266;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
-        .goal-overlay{position:absolute;inset:0;pointer-events:none;z-index:3}.penalty-box{position:absolute;top:25%;height:50%;width:10%;border:1px solid #d7eed266}.penalty-box.left{left:0;border-left:0}.penalty-box.right{right:0;border-right:0}.goal-frame{position:absolute;top:38%;height:24%;width:2.5%;border:2px solid #f0ffe0dd;background:repeating-linear-gradient(0deg,#e9f4e012 0 5px,#e9f4e044 5px 6px);box-shadow:0 0 8px #dfffc866}.goal-frame.left{left:-.2%;border-left:0;border-radius:0 4px 4px 0}.goal-frame.right{right:-.2%;border-right:0;border-radius:4px 0 0 4px}
-        .cell{position:relative;z-index:2;border-right:1px solid #d7eed20c;border-bottom:1px solid #d7eed20c;display:grid;place-items:center;background:transparent;padding:0}.cell:hover{background:#ffffff17}.cell.goal-left{border-right:2px solid #d7eed2a0}.cell.goal-right{border-left:2px solid #d7eed2a0}.cell.move-available{background:#b8f36b0d}.move-marker{position:absolute;width:43%;aspect-ratio:1;border:1px solid #dbffadaa;border-radius:50%;background:#c9ffa944;box-shadow:0 0 14px #c9ffa933;pointer-events:none;transition:transform .16s ease,background .16s ease}.cell.move-available:hover .move-marker{transform:scale(1.2);background:#d5ffb477}.cell.pass-target{background:#6be8f226;box-shadow:inset 0 0 0 2px #6be8f2aa}.cell.pass-target .token{outline:3px solid #6be8f2;outline-offset:2px;box-shadow:0 0 18px #6be8f2aa}.cell.nutmeg-target{background:#f5d1661c;box-shadow:inset 0 0 0 2px #f5d16688}.cell.nutmeg-target .token{outline:3px solid #f5d166;outline-offset:2px}.interaction-marker{position:absolute;z-index:4;right:4%;bottom:4%;width:58%;aspect-ratio:1;border-radius:50%;display:grid;place-items:center;font:700 clamp(6px,.65vw,9px) 'DM Mono',monospace;color:#07110e;border:1px solid #ffffffdd;box-shadow:0 1px 5px #0009;pointer-events:none}.pass-marker{background:#6be8f2}.nutmeg-marker{background:#f5d166}
-        .token{width:clamp(12px,2.4cqw,36px);height:clamp(12px,2.4cqw,36px);border-radius:50%;display:grid;place-items:center;font:700 clamp(6px,1cqw,14px) 'DM Mono',monospace;color:#10150f;box-shadow:0 2px 8px #0008;position:relative}
-        .token.away{background:#ec695e!important;color:#fff}.token.selected{outline:2px solid white;outline-offset:2px;box-shadow:0 0 14px #fff8}.ball{position:absolute;width:clamp(6px,1cqw,15px);height:clamp(6px,1cqw,15px);border-radius:50%;background:#fff;box-shadow:0 0 0 2px #121712,0 0 7px #fff8;top:-3px;right:-2px}
-        .ball-only{font-size:clamp(13px,2.6cqw,40px);filter:drop-shadow(0 1px 2px #000)}.legend{display:flex;gap:14px;color:#9ca79d;font:9px 'DM Mono',monospace;padding:12px 3px 2px}.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.message{padding:11px 13px;border-radius:9px;background:#ffffff08;color:#c0c9c0;font-size:11px;line-height:1.5;margin-top:12px;min-height:40px}
-        .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#141a17;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#8d998e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#b8f36b;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#b8f36b77;color:#b8f36b}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#909b91;margin-top:4px}.luck-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:10px}.luck-row b{font-size:10px;letter-spacing:.06em}.luck-row small{display:block;color:#8d998e;font-size:9px;margin-top:3px;font-weight:400;letter-spacing:0}.luck-row strong{font:700 16px 'DM Mono',monospace;color:#b8f36b}.luck-row strong.luck-hot{color:#f5c26b}.luck-row strong.luck-cold{color:#7fd1f5}.luck-bar{height:4px;background:#ffffff12;border-radius:99px;overflow:hidden;margin-top:6px}.luck-bar span{display:block;height:100%;background:#b8f36b;border-radius:99px;transition:width .3s ease}.luck-note{color:#929d93;font-size:10px;line-height:1.7;margin-top:12px}
-        .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#929d93;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#b8f36b}.roster-meta select{background:#1b241e;color:#dfe8df;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#141a17;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#929d93;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
-        .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#141a17;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#b8f36b77;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#929d93;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
-        .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#b8f36b;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#929d93;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#929d93;font-size:10px;line-height:1.6;margin:11px 0 0}.ai-evolution-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.ai-evolution-stats span{background:#ffffff05;border:1px solid #ffffff10;border-radius:9px;padding:9px 10px}.ai-evolution-stats strong{display:block;font:700 13px 'DM Mono',monospace;color:#d7f583}.ai-evolution-stats small{display:block;margin-top:3px;color:#8e998f;font:8px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:520px){.ai-evolution-stats{grid-template-columns:1fr 1fr}}
-        .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#b8f36b;font-size:10px}
-        .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#202f21,#17201b);border:1px solid #b8f36b20;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9aa59b}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#909b91;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#1d2b20,#141a17);border:1px solid #b8f36b66;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#d7f583;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aab5ab;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #b8f36b44;border-radius:9px;color:#d7f583;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
-        .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#141a17;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#b8f36b55}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#b8f36b;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#909b91;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
-        .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#141a17;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#929d93;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#b8f36b18;border-color:#b8f36b75;color:#b8f36b}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0d1110}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}.match-fullscreen .pitch{width:100%;transform:none!important}
-        .toast{position:fixed;right:24px;bottom:23px;background:#d5f5b3;color:#17200e;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:700;box-shadow:0 10px 40px #0008;z-index:9}
+        .player-chip b{font-size:10px;display:block}.player-chip small{font-size:9px;color:#92a79e}.rating{margin-left:auto;color:#c9dad2;font:10px 'DM Mono',monospace}
+        .pass-track{display:flex;gap:8px;overflow:hidden}.reward{min-width:88px;flex:1;border:1px solid #ffffff12;border-radius:10px;background:#ffffff04;text-align:center;padding:12px 6px}.reward .reward-icon{font-size:19px;margin-bottom:8px}.reward b{display:block;font:10px 'DM Mono',monospace}.reward small{color:#8da59b;font-size:9px}
+        .reward.unlocked{border-color:#8ff2c846;background:#8ff2c80a}.reward.locked{opacity:.48}
+        .match-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:17px;align-items:start;padding-top:26px}.match-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.scorebox{text-align:center}.scorebox strong{font:700 25px 'DM Mono',monospace;letter-spacing:.08em}.scorebox small{display:block;color:#92a79e;font:9px 'DM Mono',monospace;margin-top:5px;text-transform:uppercase;letter-spacing:.15em}.match-clock{display:block;color:#b9ffe4;font:700 13px 'DM Mono',monospace;margin-top:5px}.halftime-panel{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#163026;border:1px solid #8ff2c855;border-radius:10px;padding:13px 16px;margin-bottom:12px}.halftime-panel strong{font-size:13px}.halftime-panel small{display:block;color:#a8bcb3;font-size:10px;margin-top:4px}
+        .pitch-wrap{padding:12px;background:#0f1b17;border:1px solid #ffffff14;border-radius:14px}.pitch-viewport{width:100%;aspect-ratio:22/11;overflow:hidden;position:relative;border-radius:8px;background:#1f4b39;container-type:inline-size}.pitch{width:140%;height:auto;aspect-ratio:22/11;display:grid;grid-template-columns:repeat(22,1fr);grid-template-rows:repeat(11,1fr);position:relative;overflow:hidden;border-radius:8px;background:repeating-linear-gradient(90deg,#1f4b39 0%,#1f4b39 10%,#235542 10%,#235542 20%);border:1px solid #c3e8d650;transition:transform .35s ease}
+        .pitch:before{content:"";position:absolute;top:0;bottom:0;left:50%;border-left:1px solid #d6f2e666;z-index:1;pointer-events:none}.pitch:after{content:"";position:absolute;left:50%;top:50%;width:15%;aspect-ratio:1;border:1px solid #d6f2e666;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+        .goal-overlay{position:absolute;inset:0;pointer-events:none;z-index:3}.penalty-box{position:absolute;top:25%;height:50%;width:10%;border:1px solid #d6f2e666}.penalty-box.left{left:0;border-left:0}.penalty-box.right{right:0;border-right:0}.goal-frame{position:absolute;top:38%;height:24%;width:2.5%;border:2px solid #e6fff6dd;background:repeating-linear-gradient(0deg,#e3fff512 0 5px,#e3fff544 5px 6px);box-shadow:0 0 8px #c8ffec66}.goal-frame.left{left:-.2%;border-left:0;border-radius:0 4px 4px 0}.goal-frame.right{right:-.2%;border-right:0;border-radius:4px 0 0 4px}
+        .cell{position:relative;z-index:2;border-right:1px solid #d6f2e60c;border-bottom:1px solid #d6f2e60c;display:grid;place-items:center;background:transparent;padding:0}.cell:hover{background:#ffffff17}.cell.goal-left{border-right:2px solid #d6f2e6a0}.cell.goal-right{border-left:2px solid #d6f2e6a0}.cell.move-available{background:#8ff2c80d}.move-marker{position:absolute;width:43%;aspect-ratio:1;border:1px solid #c4ffe6aa;border-radius:50%;background:#b6ffde44;box-shadow:0 0 14px #b6ffde33;pointer-events:none;transition:transform .16s ease,background .16s ease}.cell.move-available:hover .move-marker{transform:scale(1.2);background:#c2ffe677}.cell.pass-target{background:#4fd9c826;box-shadow:inset 0 0 0 2px #4fd9c8aa}.cell.nutmeg-target{background:#b9ffe41c;box-shadow:inset 0 0 0 2px #b9ffe488}.interaction-marker{position:absolute;z-index:4;right:4%;bottom:4%;width:58%;aspect-ratio:1;border-radius:50%;display:grid;place-items:center;font:700 clamp(6px,.65vw,9px) 'DM Mono',monospace;color:#061a15;border:1px solid #ffffffdd;box-shadow:0 1px 5px #0009;pointer-events:none}.pass-marker{background:#4fd9c8}.nutmeg-marker{background:#b9ffe4}
+        .token{width:clamp(12px,2.4cqw,36px);height:clamp(12px,2.4cqw,36px);border-radius:50%;display:grid;place-items:center;font:700 clamp(6px,1cqw,14px) 'DM Mono',monospace;color:#0a1a16;box-shadow:0 2px 8px #0008;position:relative;transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s ease,outline-color .22s ease}
+        .token.away{background:#ec695e!important;color:#fff}.token.selected{outline:2px solid white;outline-offset:2px;box-shadow:0 0 14px #fff8;transform:scale(1.12)}
+        .token.pass-highlight{outline:3px solid #4fd9c8;outline-offset:2px;box-shadow:0 0 18px #4fd9c8cc}
+        .token.nutmeg-highlight{outline:3px solid #8ff2c8;outline-offset:2px;box-shadow:0 0 18px #8ff2cbcc}
+        .token.steal-highlight{outline:3px solid #f2d79a;outline-offset:2px;box-shadow:0 0 18px #f2d79acc}
+        .token.tutorial-highlight{outline:3px solid #b9ffe4;outline-offset:3px;animation:token-guide 1.15s ease-in-out infinite}
+        @keyframes token-guide{0%,100%{box-shadow:0 0 12px #b9ffe488;transform:scale(1)}50%{box-shadow:0 0 26px #b9ffe4cc;transform:scale(1.12)}}
+        .legend{display:flex;gap:14px;color:#9fb5ab;font:9px 'DM Mono',monospace;padding:12px 3px 2px}.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.message{padding:11px 13px;border-radius:9px;background:#ffffff08;color:#c3d5cc;font-size:11px;line-height:1.5;margin-top:12px;min-height:40px}
+        .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#101c18;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#92a79e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#8ff2c8;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#8ff2c877;color:#8ff2c8}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#94a9a1;margin-top:4px}.luck-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:10px}.luck-row b{font-size:10px;letter-spacing:.06em}.luck-row small{display:block;color:#92a79e;font-size:9px;margin-top:3px;font-weight:400;letter-spacing:0}.luck-row strong{font:700 16px 'DM Mono',monospace;color:#8ff2c8}.luck-row strong.luck-hot{color:#f2d79a}.luck-row strong.luck-cold{color:#7fe7d2}.luck-bar{height:4px;background:#ffffff12;border-radius:99px;overflow:hidden;margin-top:6px}.luck-bar span{display:block;height:100%;background:#8ff2c8;border-radius:99px;transition:width .3s ease}.luck-note{color:#93a9a0;font-size:10px;line-height:1.7;margin-top:12px}
+        .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#101c18;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#93a9a0;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#8ff2c8}.roster-meta select{background:#152b24;color:#e2efe9;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#101c18;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#93a9a0;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
+        .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#101c18;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#8ff2c877;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#93a9a0;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
+        .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#8ff2c8;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#93a9a0;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#93a9a0;font-size:10px;line-height:1.6;margin:11px 0 0}.ai-evolution-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.ai-evolution-stats span{background:#ffffff05;border:1px solid #ffffff10;border-radius:9px;padding:9px 10px}.ai-evolution-stats strong{display:block;font:700 13px 'DM Mono',monospace;color:#b9ffe4}.ai-evolution-stats small{display:block;margin-top:3px;color:#92a79e;font:8px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:520px){.ai-evolution-stats{grid-template-columns:1fr 1fr}}
+        .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#8ff2c8;font-size:10px}
+        .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#183a2f,#12241d);border:1px solid #8ff2c820;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9db3aa}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#94a9a1;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#163026,#101c18);border:1px solid #8ff2c866;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#b9ffe4;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aebfb6;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #8ff2c844;border-radius:9px;color:#b9ffe4;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+        .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#101c18;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#8ff2c855}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#94a9a1;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
+        .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#93a9a0;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#8ff2c818;border-color:#8ff2c875;color:#8ff2c8}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0b1512}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}.match-fullscreen .pitch{width:100%;transform:none!important}
+        .toast{position:fixed;right:24px;bottom:23px;background:#c9ffe9;color:#0a241c;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:700;box-shadow:0 10px 40px #0008;z-index:9}
         @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
         @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.online-room-actions{grid-template-columns:1fr}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
       `}</style>
       <style>{`
         .store-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:13px;margin:18px 0 30px}
-        .store-card{background:#141a17;border:1px solid #ffffff16;border-radius:13px;padding:17px}
-        .store-card h3{font-size:14px;margin:0 0 8px}.store-card p{color:#929d93;font-size:10px;line-height:1.55;min-height:32px}
+        .store-card{background:#101c18;border:1px solid #ffffff16;border-radius:13px;padding:17px}
+        .store-card h3{font-size:14px;margin:0 0 8px}.store-card p{color:#93a9a0;font-size:10px;line-height:1.55;min-height:32px}
         .store-card .primary,.store-card .secondary{width:100%;margin-top:12px}
         .store-card .primary:disabled,.store-card .secondary:disabled{opacity:1;cursor:not-allowed;transform:none;filter:none}
-        .store-card .primary:disabled{box-shadow:0 6px 25px #b8f36b1c}
+        .store-card .primary:disabled{box-shadow:0 6px 25px #8ff2c81c}
         .store-card .secondary:disabled{box-shadow:none}
-        .store-card .secondary.sold:disabled{background:#263029;border-color:#ffffff18;color:#89958b}
-        .store-kicker{font:10px 'DM Mono',monospace;color:#b8f36b;letter-spacing:.08em;text-transform:uppercase}
+        .store-card .secondary.sold:disabled{background:#1d3730;border-color:#ffffff18;color:#8da59b}
+        .store-kicker{font:10px 'DM Mono',monospace;color:#8ff2c8;letter-spacing:.08em;text-transform:uppercase}
         .store-timer{font:11px 'DM Mono',monospace;color:#f2d578}
         .kit-preview{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;border:1px solid #ffffff55;vertical-align:middle;margin-right:8px}
         .kit-warning{background:#46251f;border:1px solid #e8775d88;border-radius:9px;padding:12px 14px;color:#ffb19a;font-size:11px;line-height:1.55;margin:12px 0}
-        .store-notice{background:#1c2820;border:1px solid #b8f36b33;border-radius:10px;padding:12px 14px;color:#cbd8cb;font-size:11px;line-height:1.6;margin:16px 0}
+        .store-notice{background:#173028;border:1px solid #8ff2c833;border-radius:10px;padding:12px 14px;color:#cfdfd7;font-size:11px;line-height:1.6;margin:16px 0}
         .crate-overlay{position:fixed;inset:0;z-index:30;background:#070a08eF;display:grid;place-items:center;padding:20px;backdrop-filter:blur(8px)}
-        .crate-dialog{width:min(440px,100%);background:linear-gradient(145deg,#202c22,#121815);border:1px solid #b8f36b66;border-radius:18px;padding:27px;text-align:center;box-shadow:0 24px 90px #000b}
-        .crate-box{font-size:76px;line-height:1.2;margin:13px auto 19px;filter:drop-shadow(0 0 20px #b8f36b55)}
+        .crate-dialog{width:min(440px,100%);background:linear-gradient(145deg,#17322a,#0d1c17);border:1px solid #8ff2c866;border-radius:18px;padding:27px;text-align:center;box-shadow:0 24px 90px #000b}
+        .crate-box{font-size:76px;line-height:1.2;margin:13px auto 19px;filter:drop-shadow(0 0 20px #8ff2c855)}
         .crate-box.shaking{animation:crate-shake .16s ease-in-out infinite alternate}
         .crate-result{animation:crate-reveal .55s cubic-bezier(.2,.8,.2,1) both}
         .crate-result-color{width:55px;height:55px;border-radius:15px;margin:12px auto;border:2px solid #ffffff99;box-shadow:0 0 28px #ffffff38}
         @keyframes crate-shake{from{transform:rotate(-9deg) scale(1)}to{transform:rotate(9deg) scale(1.09)}}
         @keyframes crate-reveal{from{opacity:0;transform:translateY(17px) scale(.8)}to{opacity:1;transform:translateY(0) scale(1)}}
-        .token.home{background:var(--team-color)!important;color:#10150f}
+        .token.home{background:var(--team-color)!important;color:#0a1a16}
         .token.away{background:var(--team-color)!important;color:#fff}
         @media(max-width:850px){.store-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media(max-width:520px){.store-grid{grid-template-columns:1fr}}
       `}</style>
       <style>{`
-        .formation-panel{background:#141a17;border:1px solid #ffffff14;border-radius:14px;padding:22px;margin-top:24px}
+        .formation-panel{background:#101c18;border:1px solid #ffffff14;border-radius:14px;padding:22px;margin-top:24px}
         .formation-toolbar,.locker-roster-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-        .formation-toolbar select,.locker-roster-toolbar select,.role-player-select{appearance:none;background:#1a241e;color:#e5eee4;border:1px solid #39483d;border-radius:8px;padding:10px 36px 10px 12px;font:600 11px Manrope,Arial,sans-serif;outline:none}
-        .formation-toolbar select:focus,.locker-roster-toolbar select:focus,.role-player-select:focus{border-color:#b8f36b;box-shadow:0 0 0 2px #b8f36b24}
-        .formation-toolbar select option,.locker-roster-toolbar select option,.role-player-select option{background:#141a17;color:#edf3e9}
-        .formation-field{position:relative;display:grid;grid-template-columns:repeat(22,minmax(0,1fr));grid-template-rows:repeat(11,minmax(26px,1fr));aspect-ratio:22/11;min-height:290px;margin:20px auto;background:repeating-linear-gradient(90deg,#244c35 0%,#244c35 10%,#28543a 10%,#28543a 20%);border:1px solid #bddabd66;border-radius:12px;overflow:hidden}
-        .formation-field:before{content:"";position:absolute;inset:0 auto 0 50%;border-left:1px solid #d7eed255;pointer-events:none}
-        .formation-field:after{content:"";position:absolute;left:50%;top:50%;width:14%;aspect-ratio:1;border:1px solid #d7eed255;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
-        .formation-slot{z-index:1;align-self:center;justify-self:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:clamp(34px,5.6vw,65px);min-height:43px;padding:4px 2px;background:#111b17d9;border:1px solid #ffffff70;border-radius:9px;color:#eff8ed;cursor:pointer;box-shadow:0 2px 8px #0008}
-        .formation-slot:hover,.formation-slot.selected{border-color:#b8f36b;box-shadow:0 0 0 2px #b8f36b55,0 0 14px #b8f36b55}
-        .formation-slot .slot-position{font:700 8px 'DM Mono',monospace;color:#b8f36b}
+        .formation-toolbar select,.locker-roster-toolbar select,.role-player-select{appearance:none;background:#152b24;color:#e7f3ed;border:1px solid #35534a;border-radius:8px;padding:10px 36px 10px 12px;font:600 11px Manrope,Arial,sans-serif;outline:none}
+        .formation-toolbar select:focus,.locker-roster-toolbar select:focus,.role-player-select:focus{border-color:#8ff2c8;box-shadow:0 0 0 2px #8ff2c824}
+        .formation-toolbar select option,.locker-roster-toolbar select option,.role-player-select option{background:#101c18;color:#eff8f3}
+        .formation-field{position:relative;display:grid;grid-template-columns:repeat(22,minmax(0,1fr));grid-template-rows:repeat(11,minmax(26px,1fr));aspect-ratio:22/11;min-height:290px;margin:20px auto;background:repeating-linear-gradient(90deg,#1f4b39 0%,#1f4b39 10%,#235542 10%,#235542 20%);border:1px solid #c4e6d866;border-radius:12px;overflow:hidden}
+        .formation-field:before{content:"";position:absolute;inset:0 auto 0 50%;border-left:1px solid #d6f2e655;pointer-events:none}
+        .formation-field:after{content:"";position:absolute;left:50%;top:50%;width:14%;aspect-ratio:1;border:1px solid #d6f2e655;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+        .formation-slot{z-index:1;align-self:center;justify-self:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:clamp(34px,5.6vw,65px);min-height:43px;padding:4px 2px;background:#0d221cd9;border:1px solid #ffffff70;border-radius:9px;color:#f1fbf6;cursor:pointer;box-shadow:0 2px 8px #0008}
+        .formation-slot:hover,.formation-slot.selected{border-color:#8ff2c8;box-shadow:0 0 0 2px #8ff2c855,0 0 14px #8ff2c855}
+        .formation-slot .slot-position{font:700 8px 'DM Mono',monospace;color:#8ff2c8}
         .formation-slot .slot-player{font-size:8px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         .role-assignment{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px;background:#ffffff06;border:1px solid #ffffff12;border-radius:10px}
-        .role-assignment small{display:block;color:#9da99e;font-size:10px;margin-top:4px}
-        .locker-roster-toolbar{background:#141a17;border:1px solid #ffffff12;border-radius:11px;padding:12px 15px;margin-top:28px}
-        .locker-roster-toolbar label{font:10px 'DM Mono',monospace;letter-spacing:.1em;color:#a6b0a7}
+        .role-assignment small{display:block;color:#a1b5ac;font-size:10px;margin-top:4px}
+        .locker-roster-toolbar{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:12px 15px;margin-top:28px}
+        .locker-roster-toolbar label{font:10px 'DM Mono',monospace;letter-spacing:.1em;color:#a8bcb3}
         .locker-roster-toolbar select{min-width:210px}
         @media(max-width:700px){.formation-panel{padding:15px}.formation-field{min-height:230px;grid-template-rows:repeat(11,minmax(20px,1fr))}.formation-slot{width:clamp(27px,7vw,46px);min-height:34px}.formation-slot .slot-player{font-size:7px}.role-assignment{align-items:flex-start;flex-direction:column}.role-player-select{width:100%}}
+      `}</style>
+      <style>{`
+        .screen-enter{animation:screen-fade .26s cubic-bezier(.22,1,.36,1) both}
+        @keyframes screen-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+        .pitch-token-layer{position:absolute;inset:0;z-index:5;pointer-events:none}
+        .pitch-token-slot,.pitch-ball-slot{position:absolute;top:0;left:0;width:calc(100% / 22);height:calc(100% / 11);display:grid;place-items:center;transition:transform 320ms cubic-bezier(.22,1,.36,1);will-change:transform}
+        .pitch-ball-slot{z-index:6;transition:transform 280ms cubic-bezier(.22,1,.36,1)}
+        .ball-badge{width:clamp(7px,1.05cqw,16px);height:clamp(7px,1.05cqw,16px);border-radius:50%;background:radial-gradient(circle at 35% 35%,#ffffff,#d3e8e0);border:1.5px solid #0a1a16;box-shadow:0 0 9px #ffffffcc;transform:translate(68%,-68%)}
+        .ball-loose{font-size:clamp(12px,2.4cqw,36px);filter:drop-shadow(0 2px 4px #0009);animation:ball-bob 1.4s ease-in-out infinite}
+        @keyframes ball-bob{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-2px) scale(1.08)}}
+        .cell.goal-target{background:#8ff2c82e;box-shadow:inset 0 0 0 2px #8ff2c8cc;animation:goal-target-pulse 1.25s ease-in-out infinite}
+        @keyframes goal-target-pulse{0%,100%{background:#8ff2c81c}50%{background:#8ff2c840}}
+        .goal-reticle{font-size:clamp(9px,1.5cqw,20px);filter:drop-shadow(0 1px 4px #000c);pointer-events:none}
+        .cell.tutorial-target-cell{background:#b9ffe43a;box-shadow:inset 0 0 0 2.5px #b9ffe4;animation:goal-target-pulse 1.05s ease-in-out infinite}
+        .move-marker{animation:move-pulse 1.5s ease-in-out infinite}
+        @keyframes move-pulse{0%,100%{transform:scale(.92);opacity:.85}50%{transform:scale(1.08);opacity:1}}
+        .pitch-vfx-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:6}
+        .vfx-line{fill:none;stroke-linecap:round;stroke-width:2.2;stroke-dasharray:260;stroke-dashoffset:260;animation:vfx-draw .55s cubic-bezier(.22,1,.36,1) forwards}
+        @keyframes vfx-draw{0%{stroke-dashoffset:260;opacity:1}72%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
+        .pitch-callout{position:absolute;z-index:7;transform:translate(-50%,-120%);padding:4px 10px;border-radius:7px;font:800 clamp(9px,1.1cqw,13px) 'DM Mono',monospace;letter-spacing:.08em;color:#fff;background:#0c1a16eb;border:1px solid #4fd9c8a6;box-shadow:0 6px 18px #000a;pointer-events:none;white-space:nowrap;animation:callout-pop 1.15s cubic-bezier(.22,1,.36,1) forwards}
+        .pitch-callout.goal{border-color:#b9ffe4;color:#eafff7;background:#0f3a30f2}
+        .pitch-callout.steal{border-color:#f2d79a;color:#fff7e6;background:#2f2a1aef}
+        .pitch-callout.intercept,.pitch-callout.miss{border-color:#e8775d;color:#ffe7e0;background:#3a1c17ef}
+        @keyframes callout-pop{0%{opacity:0;transform:translate(-50%,-70%) scale(.75)}18%{opacity:1;transform:translate(-50%,-130%) scale(1.06)}80%{opacity:1;transform:translate(-50%,-145%) scale(1)}100%{opacity:0;transform:translate(-50%,-170%) scale(.94)}}
+        .goal-banner{position:absolute;inset:0;z-index:8;display:grid;place-items:center;pointer-events:none;background:radial-gradient(circle,#8ff2c83d,transparent 70%);animation:goal-overlay-fade 1.9s ease both}
+        .goal-banner-card{background:#0b1512f2;border:2px solid #8ff2c8;border-radius:14px;padding:13px 26px;text-align:center;box-shadow:0 16px 48px #000c;animation:goal-card-pop .55s cubic-bezier(.22,1,.36,1) both}
+        .goal-banner-card strong{display:block;font-size:clamp(22px,3.6cqw,42px);letter-spacing:.1em;color:#8ff2c8}
+        .goal-banner-card small{display:block;margin-top:4px;font:600 clamp(9px,1.1cqw,13px) 'DM Mono',monospace;color:#eafaf4;letter-spacing:.06em}
+        @keyframes goal-overlay-fade{0%{opacity:0}12%{opacity:1}82%{opacity:1}100%{opacity:0}}
+        @keyframes goal-card-pop{0%{transform:scale(.72) translateY(10px)}60%{transform:scale(1.06)}100%{transform:scale(1) translateY(0)}}
+        .goal-net-flash{position:absolute;top:33%;height:34%;width:4%;z-index:4;pointer-events:none;background:radial-gradient(circle,#e6fff6e6,#8ff2c800 70%);animation:net-flash .85s ease-out both}
+        .goal-net-flash.left{left:0}.goal-net-flash.right{right:0}
+        @keyframes net-flash{0%{opacity:0;transform:scale(.5)}25%{opacity:1;transform:scale(1.4)}100%{opacity:0;transform:scale(1.9)}}
+        .pitch-goal-flash{position:absolute;inset:0;z-index:3;pointer-events:none;background:#8ff2c8;animation:pitch-flash .7s ease-out both}
+        @keyframes pitch-flash{0%{opacity:0}18%{opacity:.34}100%{opacity:0}}
+        .tutorial-banner{display:flex;justify-content:space-between;align-items:center;gap:14px;background:linear-gradient(120deg,#123a30,#12241d);border:1px solid #b9ffe466;border-radius:12px;padding:12px 16px;margin-bottom:12px;flex-wrap:wrap}
+        .tutorial-banner strong{display:block;font-size:13px;color:#b9ffe4}
+        .tutorial-banner span{display:block;font-size:12px;color:#d9efe7;margin-top:3px;line-height:1.5}
+        .tutorial-dots{display:flex;gap:5px;margin-top:8px}
+        .tutorial-dots i{display:block;width:24px;height:4px;border-radius:99px;background:#ffffff1f}
+        .tutorial-dots i.done{background:#4fd9c8}
+        .tutorial-dots i.active{background:#b9ffe4}
+        .welcome-tutorial-card{display:flex;justify-content:space-between;align-items:center;gap:16px;background:linear-gradient(120deg,#12352c,#101c18);border:1px solid #b9ffe44d;border-radius:14px;padding:18px 22px;margin-bottom:18px;flex-wrap:wrap}
+        .welcome-tutorial-card strong{font-size:15px;color:#f4fffb;display:block}
+        .welcome-tutorial-card p{margin:4px 0 0;font-size:12px;color:#a5bdb3}
+        .tutorial-dialog{width:min(470px,100%);background:linear-gradient(145deg,#173b31,#0e1c18);border:1px solid #b9ffe466;border-radius:18px;padding:28px;text-align:center;box-shadow:0 24px 90px #000b}
+        .tutorial-dialog .tutorial-medal{font-size:60px;line-height:1.2;margin:6px auto 12px;filter:drop-shadow(0 0 20px #8ff2c866)}
+        .tutorial-dialog h2{margin:6px 0 8px;font-size:25px;color:#b9ffe4;letter-spacing:-.02em}
+        .tutorial-dialog p{color:#a9bfb6;font-size:12px;line-height:1.7;margin:0 0 8px}
+        .tutorial-reward{display:inline-block;margin:12px 0 18px;padding:10px 16px;border:1px solid #8ff2c866;border-radius:9px;color:#d8ffef;font:12px 'DM Mono',monospace;background:#8ff2c814}
+        .tutorial-dialog .victory-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap}
+        .action.recommended{border-color:#b9ffe4;background:#b9ffe414;color:#eafff8;box-shadow:0 0 0 1px #b9ffe455,0 0 16px #b9ffe41f}
+        @media(prefers-reduced-motion:reduce){
+          .screen-enter,.move-marker,.ball-loose,.vfx-line,.pitch-callout,.goal-banner,.goal-banner-card,.goal-net-flash,.pitch-goal-flash,.cell.goal-target,.cell.tutorial-target-cell,.token.tutorial-highlight{animation:none!important}
+          .pitch,.pitch-token-slot,.pitch-ball-slot,.token,button{transition:none!important}
+        }
       `}</style>
       <header className="topbar">
         <div className="brand"><div className="brand-mark">⚽</div><div>BLITZ LEAGUE<small>TACTICAL PITCH · SEASON 01</small></div></div>
@@ -3225,6 +3600,7 @@ function App() {
           <button className={screen === "home" ? "active" : ""} onClick={() => { stopQuickplay(); setScreen("home"); }}>DASHBOARD</button>
           <button className={screen === "campaign" ? "active" : ""} onClick={() => { stopQuickplay(); setScreen("campaign"); }}>CAMPAIGN</button>
           <button className={screen === "quickplay" ? "active" : ""} onClick={showQuickplayOptions}>QUICKPLAY</button>
+          <button className={screen === "match" && quickplayMode === "tutorial" ? "active" : ""} onClick={startTutorial}>TUTORIAL</button>
           <button className={screen === "locker" ? "active" : ""} onClick={() => setScreen("locker")}>LOCKER ROOM</button>
           <button className={screen === "store" ? "active" : ""} onClick={() => setScreen("store")}>STORE</button>
           <button className={screen === "pass" ? "active" : ""} onClick={() => setScreen("pass")}>SEASON PASS</button>
@@ -3240,8 +3616,15 @@ function App() {
       {screen === "home" && <div className="content">
         <section className="hero">
           <div><div className="eyebrow">Turn-based football · season one</div><h1>Own the pitch.</h1><p className="subtitle">Build your MLS-inspired squad, outplay the opposition, and find the back of the net. Every move matters.</p></div>
-          <div className="hero-cta"><button className="primary" onClick={() => setScreen("campaign")}>▶ &nbsp;CAMPAIGN MAP</button><button className="secondary" onClick={showQuickplayOptions}>⚡ &nbsp;QUICKPLAY</button><button className="secondary" onClick={() => setScreen("locker")}>LOCKER ROOM</button></div>
+          <div className="hero-cta"><button className="primary" onClick={() => setScreen("campaign")}>▶ &nbsp;CAMPAIGN MAP</button><button className="secondary" onClick={showQuickplayOptions}>⚡ &nbsp;QUICKPLAY</button><button className="secondary" onClick={startTutorial}>🎓 &nbsp;TUTORIAL</button><button className="secondary" onClick={() => setScreen("locker")}>LOCKER ROOM</button></div>
         </section>
+        {!tutorialCompleted && <div className="welcome-tutorial-card">
+          <div>
+            <strong>New here? Learn the game in one guided match</strong>
+            <p>A Training XI walks you through moving, passing, scoring, and stealing. Finish the drill for +150 XP and +50 coins.</p>
+          </div>
+          <button className="primary" onClick={startTutorial}>🎓 &nbsp;START TUTORIAL</button>
+        </div>}
         <div className="home-grid">
           <section className="panel">
             <div className="panel-heading"><h2>Campaign trail</h2><span>Progression</span></div>
@@ -3546,7 +3929,7 @@ function App() {
               onChange={(event) => setJoinRoomCode(event.target.value.replace(/\D/g, "").slice(0, 7))} />
             <button className="secondary" disabled={joinRoomCode.length !== 7} onClick={() => connectOnline("join-room")}>JOIN GAME</button>
           </div>
-          {onlineStatus && <div className="store-notice" role={onlineStatus.startsWith("Couldn't connect") ? "alert" : "status"}>{onlineStatus}{onlineRoomCode && <> · GAME CODE <strong style={{ color: "#b8f36b", letterSpacing: ".18em", fontSize: "16px" }}>{onlineRoomCode}</strong></>}</div>}
+          {onlineStatus && <div className="store-notice" role={onlineStatus.startsWith("Couldn't connect") ? "alert" : "status"}>{onlineStatus}{onlineRoomCode && <> · GAME CODE <strong style={{ color: "#8ff2c8", letterSpacing: ".18em", fontSize: "16px" }}>{onlineRoomCode}</strong></>}</div>}
           <a className="online-setup-link" href="https://render.com/deploy?repo=https://github.com/person616/blitz-league" target="_blank" rel="noreferrer">First-time setup: deploy the match server on Render</a>
         </section>}
       </div>}
@@ -3571,7 +3954,7 @@ function App() {
 
       {screen === "pass" && <div className="content pass-page">
         <div className="eyebrow">Earn rewards as you play</div><h1>Season pass</h1><p className="subtitle">Each level takes 1,000 XP. Wins earn 100 XP in regular matches, while campaign wins scale with the stage. Unlock Street 3v3 at Level 10 and Golden Goal at Level 20. Sim-tested rewards build in strength, with a 90+ OVR player every 20 levels starting at Level 21.</p>
-        <div className="pass-banner"><h2>Level {battlePassLevel} of {battlePassFinalLevel} <span style={{ color: "#b8f36b" }}>·</span> {xp.toLocaleString()} XP</h2><p>{battlePassLevel === battlePassFinalLevel ? "You reached the final level. Your progress is saved on this device." : `${nextLevelXpTarget - xp} XP to reach Level ${battlePassLevel + 1}. Each level requires 1,000 XP.`}</p><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div><div className="small-note">{battlePassLevel === battlePassFinalLevel ? "FINAL LEVEL COMPLETE" : `${xpTowardNextLevel} / ${xpForNextLevel} XP toward Level ${battlePassLevel + 1}`}</div></div>
+        <div className="pass-banner"><h2>Level {battlePassLevel} of {battlePassFinalLevel} <span style={{ color: "#8ff2c8" }}>·</span> {xp.toLocaleString()} XP</h2><p>{battlePassLevel === battlePassFinalLevel ? "You reached the final level. Your progress is saved on this device." : `${nextLevelXpTarget - xp} XP to reach Level ${battlePassLevel + 1}. Each level requires 1,000 XP.`}</p><div className="progress-track"><div className="progress-fill" style={{ width: `${passProgress}%` }} /></div><div className="small-note">{battlePassLevel === battlePassFinalLevel ? "FINAL LEVEL COMPLETE" : `${xpTowardNextLevel} / ${xpForNextLevel} XP toward Level ${battlePassLevel + 1}`}</div></div>
         <div className="panel-heading"><h2>Level rewards</h2><span>{allPassPlayerRewards.length} MLS players · {battlePassFinalLevel} total levels · one reward per level</span></div>
         <div className="pass-levels">{Array.from({ length: battlePassFinalLevel }, (_, index) => index + 1).map((rewardLevel) => {
           const playerReward = playerRewardsByLevel[rewardLevel];
@@ -3599,38 +3982,78 @@ function App() {
 
       {screen === "match" && <div className="content match-layout">
         <section>
-          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "online" ? `${onlineSide === "home" ? "HOME" : "AWAY"} · ONLINE 1V1${ownTurn ? " · YOUR TURN" : " · OPPONENT'S TURN"}` : quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {match.formationId}</small><span className="match-clock">{clockLabel} · HALF {match.half}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "tutorial" ? `INTERACTIVE TUTORIAL · STEP ${tutorialStep} OF ${tutorialStepCount}` : quickplayMode === "online" ? `${onlineSide === "home" ? "HOME" : "AWAY"} · ONLINE 1V1${ownTurn ? " · YOUR TURN" : " · OPPONENT'S TURN"}` : quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {quickplayMode === "tutorial" ? "DRILL" : match.formationId}</small><span className="match-clock">{quickplayMode === "tutorial" ? "PRACTICE PITCH" : `${clockLabel} · HALF ${match.half}`}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
           {quickplayMode === "online" && !onlineReady && <div className="store-notice" role="status">{onlineStatus || "Waiting for the other player to join."} {onlineRoomCode && <>Room code: <strong>{onlineRoomCode}</strong></>}</div>}
           {quickplayMode === "online" && onlineStatus && onlineReady && onlineStatus.includes("disconnected") && <div className="kit-warning" role="alert">{onlineStatus}</div>}
           {match.halftime && <div className="halftime-panel"><div><strong>Halftime · {scoreLabel}</strong><small>Teams have switched ends. Each in-game minute lasts 3.5 seconds.</small></div><button className="primary" onClick={resumeSecondHalf}>START SECOND HALF</button></div>}
           {teamColorsSimilar && <div className="kit-warning" role="alert">⚠ Your team and opposition colors are too similar. Change one in Locker Room to make the sides easier to distinguish.</div>}
+          {tutorialStep > 0 && tutorialGuide && <div className="tutorial-banner">
+            <div>
+              <strong>{tutorialGuide.title}</strong>
+              <span>{tutorialGuide.detail}</span>
+              <div className="tutorial-dots" aria-hidden="true">{Array.from({ length: tutorialStepCount }, (_, index) => <i key={index} className={index + 1 < tutorialStep ? "done" : index + 1 === tutorialStep ? "active" : ""} />)}</div>
+            </div>
+            <button className="ghost-btn" onClick={exitTutorial}>SKIP TUTORIAL</button>
+          </div>}
           <div className="pitch-wrap"><div className="pitch-viewport"><div className="pitch" aria-label="22 by 11 football pitch" style={{ transform: `translate(-${pitchCameraX}%, -${pitchCameraY}%)` }}>
             {Array.from({ length: 11 }, (_, y) => Array.from({ length: 22 }, (_, x) => {
               const token = match.tokens.find((t) => t.x === x && t.y === y);
               const ballHere = match.ball.x === x && match.ball.y === y;
-              const selected = token?.player.id === match.selected;
               const isAvailable = availableMoveKeys.has(`${x},${y}`);
               const isPassTarget = !!token && passMode && eligiblePassIds.has(token.player.id);
               const isNutmegTarget = !!token && !passMode && token.player.id === nutmegTargetId;
-              return <button aria-label={`Tile ${x + 1}, ${y + 1}${token ? `: ${token.player.name}` : ""}${ballHere ? ", ball" : ""}${isAvailable ? ", available move" : ""}${isPassTarget ? ", pass receiver" : ""}${isNutmegTarget ? ", attempt nutmeg" : ""}`} className={`cell ${x === 0 ? "goal-left" : ""} ${x === 21 ? "goal-right" : ""} ${isAvailable ? "move-available" : ""} ${isPassTarget ? "pass-target" : ""} ${isNutmegTarget ? "nutmeg-target" : ""}`} key={`${x}-${y}`} onClick={() => onCellClick(x, y)}>
+              const isStealTarget = !!token && ownTurn && canSteal && token.player.id === opposingCarrier?.player.id;
+              const isGoalTarget = !token && ownTurn && canShoot && x === attackingGoalX && y >= 4 && y <= 6;
+              const isTutorialTarget = !!tutorialGuide?.highlightTile
+                && tutorialGuide.highlightTile.x === x && tutorialGuide.highlightTile.y === y;
+              return <button aria-label={`Tile ${x + 1}, ${y + 1}${token ? `: ${token.player.name}` : ""}${ballHere ? ", ball" : ""}${isAvailable ? ", available move" : ""}${isPassTarget ? ", pass receiver" : ""}${isNutmegTarget ? ", attempt nutmeg" : ""}${isStealTarget ? ", attempt steal" : ""}${isGoalTarget ? ", shoot on goal" : ""}`} className={`cell ${x === 0 ? "goal-left" : ""} ${x === 21 ? "goal-right" : ""} ${isAvailable ? "move-available" : ""} ${isPassTarget ? "pass-target" : ""} ${isNutmegTarget ? "nutmeg-target" : ""} ${isGoalTarget ? "goal-target" : ""} ${isTutorialTarget ? "tutorial-target-cell" : ""}`} key={`${x}-${y}`} onClick={() => onCellClick(x, y)}>
                 {isAvailable && <span className="move-marker" />}
-                {token ? <span className={`token ${token.side} ${selected ? "selected" : ""}`} style={{ "--team-color": kitColorById(token.side === "home" ? homeKitColorId : awayKitColorId).value } as CSSProperties}>{token.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}{ballHere && <i className="ball" />}</span> : ballHere ? <span className="ball-only">⚽</span> : null}
+                {isGoalTarget && <span className="goal-reticle" aria-hidden="true">⚽</span>}
                 {isPassTarget && <span className="interaction-marker pass-marker" aria-hidden="true">↗</span>}
                 {isNutmegTarget && <span className="interaction-marker nutmeg-marker" aria-hidden="true">〰</span>}
+                {isStealTarget && <span className="interaction-marker pass-marker" aria-hidden="true">🛡</span>}
               </button>;
             }))}
+            <div className="pitch-token-layer" aria-hidden="true">
+              {match.tokens.map((token) => {
+                const isSelected = token.player.id === match.selected;
+                const isPassTarget = passMode && eligiblePassIds.has(token.player.id);
+                const isNutmegTarget = !passMode && token.player.id === nutmegTargetId;
+                const isStealTarget = ownTurn && canSteal && token.player.id === opposingCarrier?.player.id;
+                const isTutorialTarget = tutorialGuide?.highlightTokenId === token.player.id;
+                return <div className="pitch-token-slot" key={token.player.id} style={{ transform: `translate3d(${token.x * 100}%, ${token.y * 100}%, 0)` }}>
+                  <span className={`token ${token.side} ${isSelected ? "selected" : ""} ${isPassTarget ? "pass-highlight" : ""} ${isNutmegTarget ? "nutmeg-highlight" : ""} ${isStealTarget ? "steal-highlight" : ""} ${isTutorialTarget ? "tutorial-highlight" : ""}`} style={{ "--team-color": kitColorById(token.side === "home" ? homeKitColorId : awayKitColorId).value } as CSSProperties}>{token.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</span>
+                </div>;
+              })}
+              <div className="pitch-ball-slot" style={{ transform: `translate3d(${match.ball.x * 100}%, ${match.ball.y * 100}%, 0)` }}>
+                {match.tokens.some((token) => token.x === match.ball.x && token.y === match.ball.y)
+                  ? <span className="ball-badge" />
+                  : <span className="ball-loose">⚽</span>}
+              </div>
+            </div>
+            {pitchFx && <svg className="pitch-vfx-svg" viewBox="0 0 220 110" preserveAspectRatio="none" aria-hidden="true" key={pitchFx.id}>
+              <line className="vfx-line" x1={(pitchFx.from.x + 0.5) * 10} y1={(pitchFx.from.y + 0.5) * 10} x2={(pitchFx.to.x + 0.5) * 10} y2={(pitchFx.to.y + 0.5) * 10} stroke={pitchFx.kind === "goal" ? "#b9ffe4" : pitchFx.kind === "intercept" || pitchFx.kind === "miss" ? "#e8775d" : pitchFx.kind === "steal" ? "#f2d79a" : "#4fd9c8"} />
+            </svg>}
+            {pitchFx?.label && <div className={`pitch-callout ${pitchFx.kind}`} style={{ left: `${(pitchFx.to.x + 0.5) / 22 * 100}%`, top: `${(pitchFx.to.y + 0.5) / 11 * 100}%` }} aria-hidden="true" key={`callout-${pitchFx.id}`}>{pitchFx.label}</div>}
             <div className="goal-overlay" aria-hidden="true"><span className="penalty-box left" /><span className="penalty-box right" /><span className="goal-frame left" /><span className="goal-frame right" /></div>
-          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: kitColorById(homeKitColorId).value }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: kitColorById(awayKitColorId).value }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{match.format === "small-sided" ? "3v3" : "11v11"} · 22 × 11 TILES</span></div></div>
+            {goalBanner && <><div className="pitch-goal-flash" aria-hidden="true" /><div className={`goal-net-flash ${goalBanner.side === "home" ? "right" : "left"}`} aria-hidden="true" /></>}
+            {goalBanner && <div className="goal-banner" aria-live="assertive">
+              <div className="goal-banner-card">
+                <strong>GOAL!</strong>
+                <small>{goalBanner.scorer} · {quickplayMode === "local" ? (goalBanner.side === "home" ? "HOME" : "AWAY") : goalBanner.side === "home" ? "WHAT A FINISH!" : "TIME TO ANSWER!"}</small>
+              </div>
+            </div>}
+          </div>{captionsEnabled && captionText && <div className={`game-caption ${captionSize}`} aria-live="polite">{captionText}</div>}</div><div className="legend"><span><i style={{ background: kitColorById(homeKitColorId).value }} />{quickplayMode === "local" ? "HOME" : "YOUR SQUAD"}</span><span><i style={{ background: kitColorById(awayKitColorId).value }} />{quickplayMode === "local" ? "AWAY" : "OPPOSITION"}</span><span>⚽ BALL</span><span>{match.format === "small-sided" ? "3v3" : "11v11"} · CLICK THE GLOWING GOAL TO SHOOT</span></div></div>
           <div className="message">{match.message}</div>
         </section>
         <aside className="sidebar">
-          <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#8e998f" }}>Select a player on the pitch</small>}</section>
+          <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#92a79e" }}>Select a player on the pitch</small>}</section>
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
-            <button className="action" disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${Math.round(displayedShotChance)}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
+            <button className={`action ${tutorialStep === 3 || tutorialStep === 5 ? "recommended" : ""}`} disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${Math.round(displayedShotChance)}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
             {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${Math.round(displayedClearChance)}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
-            <button className="action" disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passReach} tiles`}</span></button>
+            <button className={`action ${tutorialStep === 2 ? "recommended" : ""}`} disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passReach} tiles`}</span></button>
             <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${Math.round(displayedNutmegChance)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
-            <button className="action" disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${Math.round(displayedStealChance)}% · adjacent carrier` : "defend near the ball"}</span></button>
+            <button className={`action ${tutorialStep === 4 ? "recommended" : ""}`} disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${Math.round(displayedStealChance)}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplayMode === "online" ? "Turn passed to your online opponent." : quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplayMode === "online" ? "send turn online" : quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>
           <section className="side-panel"><h3>Luck balance</h3>
@@ -3644,7 +4067,7 @@ function App() {
             <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>
             <div className="small-note" style={{ marginTop: 9 }}>Awards the current match and progression rewards for UI testing.</div>
           </section>}
-          <section className="side-panel"><h3>{match.finished ? "Full time" : quickplaySide !== null ? `${match.turn === "home" ? "Home" : "Away"} player · ${ownTurn ? "your turn" : "opponent's turn"}` : ownTurn ? "Your turn" : "Opponent's turn"}</h3><div style={{ color: "#929d93", fontSize: 10, lineHeight: 1.8 }}>{quickplaySide !== null ? "Pass-and-play on one device: pass the screen after each turn. Each player controls the team whose turn it is." : "Select one of your players, then click an open tile to move."} Each turn allows one drive and one action. A successful nutmeg grants one extra drive and action; a failed attempt gives the opponent two turns. The ball carrier can pass, shoot, or risk a nutmeg against an adjacent defender. Shot angle affects accuracy. Matches last 90 in-game minutes, with halftime at 45; each game minute takes 3.5 seconds. Existing goal-target rules can end a match earlier.</div><div className="small-note" style={{ marginTop: 10 }}>DRIVE {Math.min(match.drivesUsed, 1 + match.bonusDrives)}/{1 + match.bonusDrives} · ACTION {Math.min(match.actionsUsed, 1 + match.bonusActions)}/{1 + match.bonusActions}</div></section>
+          <section className="side-panel"><h3>{match.finished ? "Full time" : quickplaySide !== null ? `${match.turn === "home" ? "Home" : "Away"} player · ${ownTurn ? "your turn" : "opponent's turn"}` : ownTurn ? "Your turn" : "Opponent's turn"}</h3><div style={{ color: "#93a9a0", fontSize: 10, lineHeight: 1.8 }}>{quickplaySide !== null ? "Pass-and-play on one device: pass the screen after each turn. Each player controls the team whose turn it is." : "Select one of your players, then click an open tile to move."} Each turn allows one drive and one action. A successful nutmeg grants one extra drive and action; a failed attempt gives the opponent two turns. The ball carrier can pass, shoot, or risk a nutmeg against an adjacent defender. Shot angle affects accuracy. Matches last 90 in-game minutes, with halftime at 45; each game minute takes 3.5 seconds. Existing goal-target rules can end a match earlier.</div><div className="small-note" style={{ marginTop: 10 }}>DRIVE {Math.min(match.drivesUsed, 1 + match.bonusDrives)}/{1 + match.bonusDrives} · ACTION {Math.min(match.actionsUsed, 1 + match.bonusActions)}/{1 + match.bonusActions}</div></section>
         </aside>
       </div>}
       {crateReveal && <div className="crate-overlay" role="presentation" onClick={() => { if (crateRevealed) setCrateReveal(null); }}>
@@ -3660,10 +4083,24 @@ function App() {
               <div className="store-kicker">Your rewards</div>
               <div className="crate-result-color" style={{ background: crateReveal.color.value }} aria-label={`${crateReveal.color.name} team color`} />
               <strong>{crateReveal.color.name}</strong>
-              <p style={{ color: "#b8c5b9", fontSize: 13, margin: "12px 0 4px" }}>{crateReveal.reward}</p>
+              <p style={{ color: "#bcd2c8", fontSize: 13, margin: "12px 0 4px" }}>{crateReveal.reward}</p>
               <small className="small-note">Team color added to your Locker Room{crateReveal.bonusCoins ? " · duplicate color converted to 25 coins" : ""}</small>
               <button className="primary" style={{ width: "100%", marginTop: 21 }} onClick={() => setCrateReveal(null)}>CONTINUE</button>
             </div>}
+        </section>
+      </div>}
+      {tutorialComplete && <div className="crate-overlay" role="presentation">
+        <section className="tutorial-dialog" role="dialog" aria-modal="true" aria-labelledby="tutorial-complete-title">
+          <div className="eyebrow">Training XI · Cleared</div>
+          <div className="tutorial-medal">🏆</div>
+          <h2 id="tutorial-complete-title">TUTORIAL COMPLETE</h2>
+          <p>You moved off the ball, linked a pass, found the net, and won possession back. That is a real Blitz League match in miniature — the rest is up to you.</p>
+          <div className="tutorial-reward">+150 XP &nbsp;·&nbsp; +50 COINS</div>
+          <div className="victory-actions">
+            <button className="primary" onClick={exitTutorial}>DASHBOARD</button>
+            <button className="secondary" onClick={() => { exitTutorial(); setScreen("campaign"); }}>CAMPAIGN MAP</button>
+            <button className="secondary" onClick={startTutorial}>REPLAY DRILL</button>
+          </div>
         </section>
       </div>}
       {notice && <button className="toast" onClick={() => setNotice("")}>{notice} &nbsp; ×</button>}

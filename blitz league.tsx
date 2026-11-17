@@ -38,6 +38,7 @@ type PitchFx = {
   from: { x: number; y: number };
   to: { x: number; y: number };
   label?: string;
+  side?: "home" | "away";
 };
 type GoalBanner = { side: "home" | "away"; scorer: string };
 type TutorialGuide = {
@@ -326,6 +327,46 @@ const kitColorsTooSimilar = (first: string, second: string) => {
   const b = rgb(second);
   return Math.sqrt(a.reduce((sum, channel, index) => sum + (channel - b[index]) ** 2, 0)) < 115;
 };
+function KitColorPicker({ label, value, options, onChange }: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectedColor = kitColorById(value);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+  return <div className={`kit-select ${open ? "open" : ""}`} ref={rootRef}>
+    <button type="button" className="kit-select-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={open}
+      onClick={() => setOpen((current) => !current)}
+      onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
+      <span className="kit-swatch" style={{ background: selectedColor.value }} aria-hidden="true" />
+      <span className="kit-select-name">{selectedColor.name}</span>
+      <span className="kit-chevron" aria-hidden="true">{open ? "▴" : "▾"}</span>
+    </button>
+    {open && <div className="kit-select-menu" role="listbox" aria-label={label}>
+      {options.map((id) => {
+        const color = kitColorById(id);
+        const selected = id === value;
+        return <button type="button" role="option" aria-selected={selected} key={id}
+          className={`kit-option ${selected ? "selected" : ""}`}
+          onClick={() => { onChange(id); setOpen(false); }}>
+          <span className="kit-swatch" style={{ background: color.value }} aria-hidden="true" />
+          <span>{color.name}</span>
+          <span className="kit-check" aria-hidden="true">{selected ? "✓" : ""}</span>
+        </button>;
+      })}
+    </div>}
+  </div>;
+}
 const formatCountdown = (milliseconds: number) => {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -2217,9 +2258,9 @@ function App() {
     window.clearTimeout(tutorialCompleteTimer.current);
   }, []);
 
-  function playPitchFx(kind: PitchFxKind, to: { x: number; y: number }, label?: string, from?: { x: number; y: number }) {
+  function playPitchFx(kind: PitchFxKind, to: { x: number; y: number }, label?: string, from?: { x: number; y: number }, side?: "home" | "away") {
     window.clearTimeout(pitchFxTimer.current);
-    setPitchFx({ id: Date.now() + Math.random(), kind, from: from ?? to, to, label });
+    setPitchFx({ id: Date.now() + Math.random(), kind, from: from ?? to, to, label, side });
     pitchFxTimer.current = window.setTimeout(() => setPitchFx(null), 1150);
   }
 
@@ -2512,6 +2553,7 @@ function App() {
         ai.luck = clearance.luck;
         ai.stealProtectedSide = undefined;
         ai.message = clearance.message;
+        playPitchFx("pass", clearance.ball, "CLEARED!", { x: owner.x, y: owner.y }, owner.side);
       } else {
         const receiver = ai.tokens.filter((token) => token.side === owner.side && token.player.position !== "GK"
           && distance(owner, token) <= passingRange(owner.player)
@@ -2525,6 +2567,7 @@ function App() {
           const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
           if (shiftedReceiver) ai.ball = { x: shiftedReceiver.x, y: shiftedReceiver.y };
           ai.message = `${owner.player.name} stays back and plays a safe pass to ${receiver.player.name}.`;
+          if (shiftedReceiver) playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, "PASS!", { x: owner.x, y: owner.y }, owner.side);
         } else {
           ai.message = `${owner.player.name} holds position near the goal and protects the defensive shape.`;
         }
@@ -2549,6 +2592,7 @@ function App() {
           ai.ball = { x: interception!.token.x, y: interception!.token.y };
           ai.stealProtectedSide = undefined;
           ai.message = `${interception!.token.player.name} blocks the opposition's shot and intercepts the ball!`;
+          playPitchFx("intercept", { x: interception!.token.x, y: interception!.token.y }, "BLOCKED!", { x: owner.x, y: owner.y }, interception!.token.side);
         } else if (shot?.success) {
           pendingScorer.current = { side: "away", name: owner.player.name };
           ai.score = [ai.score[0], ai.score[1] + 1];
@@ -2557,6 +2601,7 @@ function App() {
           ai.ball = kickoff.ball;
           ai.stealProtectedSide = undefined;
           ai.message = `The opposition scores! ${ai.score[0]}–${ai.score[1]}.`;
+          playPitchFx("goal", goal, "GOAL!", { x: owner.x, y: owner.y }, owner.side);
           if (ai.score[1] >= goalTarget) {
             setMatch(finishOrSet(ai));
             return;
@@ -2582,6 +2627,7 @@ function App() {
           ai.ball = goal;
           ai.stealProtectedSide = undefined;
           ai.message = `The opposition's shot from ${goalDistance} tiles out goes wide (${Math.round(shot?.chance ?? chance)}% chance). The ball is loose by your goal.`;
+          playPitchFx("miss", goal, "WIDE!", { x: owner.x, y: owner.y }, owner.side);
         }
       } else if (action?.kind === "pass") {
         const receiver = action.receiver;
@@ -2595,6 +2641,7 @@ function App() {
           ai.ball = { x: interceptor!.token.x, y: interceptor!.token.y };
           ai.stealProtectedSide = undefined;
           ai.message = `${interceptor!.token.player.name} reads the opposition pass and intercepts it!`;
+          playPitchFx("intercept", { x: interceptor!.token.x, y: interceptor!.token.y }, "INTERCEPTED!", { x: owner.x, y: owner.y }, interceptor!.token.side);
         } else {
           ai.tokens = shiftFormationWithBall(ai.tokens, owner.x, receiver.x, receiver.player.id, ai.half);
           const shiftedReceiver = ai.tokens.find((token) => token.player.id === receiver.player.id);
@@ -2602,16 +2649,19 @@ function App() {
           ai.message = passGap >= 4
             ? `The opposition switches play and finds ${receiver.player.name} with a long weighted pass.`
             : `The opposition finds ${receiver.player.name} in space with a weighted pass.`;
+          if (shiftedReceiver) playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, passGap >= 4 ? "GREAT BALL!" : "PASS!", { x: owner.x, y: owner.y }, owner.side);
         }
       } else {
         const next = action?.kind === "carry" ? action.move : undefined;
         if (next) {
           const previousBallX = ai.ball.x;
+          const previousOwner = { x: owner.x, y: owner.y };
           owner.x = next.x;
           owner.y = next.y;
           ai.ball = { x: next.x, y: next.y };
           if (ai.stealProtectedSide === "away") ai.stealProtectedSide = undefined;
           ai.tokens = shiftFormationWithBall(ai.tokens, previousBallX, next.x, owner.player.id, ai.half);
+          playPitchFx("move", { x: next.x, y: next.y }, undefined, previousOwner, owner.side);
         }
         ai.message = next
           ? `The opposition's ${owner.player.name} carries into space and keeps the attack moving.`
@@ -2649,14 +2699,17 @@ function App() {
               if (shiftedPresser) ai.ball = { x: shiftedPresser.x, y: shiftedPresser.y };
               ai.stealProtectedSide = "away";
               ai.message = `${presser.player.name} steals the ball with ${help + 1}-player pressure and gets in front of ${carrier.player.name} (${Math.round(stealRoll.chance)}% chance). The opposition team pushes upfield.`;
+              if (shiftedPresser) playPitchFx("steal", { x: shiftedPresser.x, y: shiftedPresser.y }, "STOLEN!", { x: carrier.x, y: carrier.y }, presser.side);
             } else {
               ai.message = `${carrier.player.name} evades the opposition's ${help + 1}-player press (${Math.round(stealRoll.chance)}% chance).`;
             }
           }
         } else if (chosenMove || defensiveOptions.length) {
           const { defender, move } = chosenMove ?? defensiveOptions[0];
+          const previousDefender = { x: defender.x, y: defender.y };
           defender.x = move.x;
           defender.y = move.y;
+          playPitchFx("move", { x: move.x, y: move.y }, undefined, previousDefender, defender.side);
           ai.message = strategy.pressing > 0.72
             ? "The opposition swarms your ball carrier and cuts off the next pass."
             : "The opposition drops into a compact block and marks your passing options.";
@@ -2679,8 +2732,10 @@ function App() {
               -distance(point, ai.ball) * 2
                 + (nearestHome ? Math.max(0, distance(point, nearestHome) - distance(point, ai.ball)) * 0.4 : 0));
           if (next) {
+            const previousChaser = { x: nearestAway.x, y: nearestAway.y };
             nearestAway.x = next.x;
             nearestAway.y = next.y;
+            playPitchFx("move", { x: next.x, y: next.y }, undefined, previousChaser, nearestAway.side);
             if (next.x === ai.ball.x && next.y === ai.ball.y) {
               ai.stealProtectedSide = undefined;
               ai.message = `${nearestAway.player.name} reaches the loose ball and recovers possession.`;
@@ -2705,8 +2760,10 @@ function App() {
             } => !!candidate.move)
             .sort((a, b) => b.move.score - a.move.score)[0];
           if (cover) {
+            const previousCover = { x: cover.defender.x, y: cover.defender.y };
             cover.defender.x = cover.move.x;
             cover.defender.y = cover.move.y;
+            playPitchFx("move", { x: cover.move.x, y: cover.move.y }, undefined, previousCover, cover.defender.side);
             ai.message = "The opposition drops a defender into the central lane to protect against the loose ball.";
           } else {
             ai.message = "The ball is loose. Your team has the better chance to reach it next turn.";
@@ -2861,7 +2918,7 @@ function App() {
       updated.ball = { x, y };
       if (updated.stealProtectedSide === player.side) updated.stealProtectedSide = undefined;
     }
-    if (steps >= 2) playPitchFx(hasBall ? "pass" : "move", { x, y }, undefined, { x: player.x, y: player.y });
+    if (steps >= 2) playPitchFx(hasBall ? "pass" : "move", { x, y }, undefined, { x: player.x, y: player.y }, player.side);
     if (tutorialStep === 1) {
       setTutorialStep(2);
       setMatch({
@@ -2914,7 +2971,7 @@ function App() {
       y: 5,
     };
     if (tutorialStep === 3) {
-      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y }, player.side);
       const drill = makeTutorialMatch(4, [match.score[0] + 1, match.score[1]], homePlayers);
       previousScore.current = drill.score;
       celebrateGoal(player.side, player.player.name);
@@ -2924,7 +2981,7 @@ function App() {
     }
     if (tutorialStep === 5) {
       const score: [number, number] = [match.score[0] + 1, match.score[1]];
-      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y }, player.side);
       celebrateGoal(player.side, player.player.name);
       previousScore.current = score;
       setMatch({
@@ -2950,7 +3007,7 @@ function App() {
     if (block?.success) {
       const tokens = shiftFormationWithBall(block.match.tokens, match.ball.x, interception!.token.x, interception!.token.player.id, match.half);
       const shiftedBlocker = tokens.find((token) => token.player.id === interception!.token.player.id) ?? interception!.token;
-      playPitchFx("intercept", { x: shiftedBlocker.x, y: shiftedBlocker.y }, "BLOCKED!", { x: player.x, y: player.y });
+      playPitchFx("intercept", { x: shiftedBlocker.x, y: shiftedBlocker.y }, "BLOCKED!", { x: player.x, y: player.y }, interception!.token.side);
       endTurn({
         ...block.match,
         tokens,
@@ -2964,7 +3021,7 @@ function App() {
     const shot = rollLuck(block?.match ?? match, player.side, opponentSide, accuracy);
     const shotChance = Math.round(shot.chance);
     if (shot.success) {
-      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y });
+      playPitchFx("goal", goal, "GOAL!", { x: player.x, y: player.y }, player.side);
       pendingScorer.current = { side: player.side, name: player.player.name };
       if (quickplaySide !== null) {
         const kickoffSide = player.side === "home" ? "away" : "home";
@@ -3005,7 +3062,7 @@ function App() {
       } else setMatch(finished);
     } else {
       const tokens = shiftFormationWithBall(shot.match.tokens, match.ball.x, goal.x, player.player.id, match.half);
-      playPitchFx("miss", goal, "WIDE!", { x: player.x, y: player.y });
+      playPitchFx("miss", goal, "WIDE!", { x: player.x, y: player.y }, player.side);
       const updated = {
         ...shot.match,
         tokens,
@@ -3026,7 +3083,7 @@ function App() {
       return;
     }
     const clearance = resolveGoalkeeperClearance(match, keeper);
-    playPitchFx("pass", clearance.ball, "CLEARED!", { x: keeper.x, y: keeper.y });
+    playPitchFx("pass", clearance.ball, "CLEARED!", { x: keeper.x, y: keeper.y }, keeper.side);
     endTurn(clearance);
   }
 
@@ -3083,7 +3140,7 @@ function App() {
     if (tutorialStep === 2) {
       const tokens = shiftFormationWithBall(match.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
       const shiftedReceiver = tokens.find((token) => token.player.id === receiver.player.id) ?? receiver;
-      playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, "PASS!", { x: player.x, y: player.y });
+      playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, "PASS!", { x: player.x, y: player.y }, player.side);
       setPassMode(false);
       setTutorialStep(3);
       setMatch({
@@ -3107,7 +3164,7 @@ function App() {
     if (passRoll?.success) {
       const tokens = shiftFormationWithBall(passRoll.match.tokens, match.ball.x, interceptor!.token.x, interceptor!.token.player.id, match.half);
       const shiftedInterceptor = tokens.find((token) => token.player.id === interceptor!.token.player.id) ?? interceptor!.token;
-      playPitchFx("intercept", { x: shiftedInterceptor.x, y: shiftedInterceptor.y }, "INTERCEPTED!", { x: player.x, y: player.y });
+      playPitchFx("intercept", { x: shiftedInterceptor.x, y: shiftedInterceptor.y }, "INTERCEPTED!", { x: player.x, y: player.y }, interceptor!.token.side);
       const updated = {
         ...passRoll.match,
         tokens,
@@ -3123,7 +3180,7 @@ function App() {
     const passBase = passRoll?.match ?? match;
     const tokens = shiftFormationWithBall(passBase.tokens, match.ball.x, receiver.x, receiver.player.id, match.half);
     const shiftedReceiver = tokens.find((token) => token.player.id === receiver.player.id) ?? receiver;
-    playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, distance(player, receiver) >= 4 ? "GREAT BALL!" : "PASS!", { x: player.x, y: player.y });
+    playPitchFx("pass", { x: shiftedReceiver.x, y: shiftedReceiver.y }, distance(player, receiver) >= 4 ? "GREAT BALL!" : "PASS!", { x: player.x, y: player.y }, player.side);
     const updated = { ...passBase, tokens, ball: { x: shiftedReceiver.x, y: shiftedReceiver.y }, selected: receiver.player.id, stealProtectedSide: undefined, message: `Pass completed to ${receiver.player.name}; both teams shift with the ball.` };
     setPassMode(false);
     spendAction(updated, updated.message);
@@ -3157,7 +3214,7 @@ function App() {
       tokens = shiftFormationWithBall(tokens, match.ball.x, landing.x, defender.player.id, match.half);
       tokens = pushTeamUpfield(tokens, defender.side, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
-      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "STOLEN!", { x: defender.x, y: defender.y });
+      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "STOLEN!", { x: defender.x, y: defender.y }, defender.side);
       if (tutorialStep === 4) {
         setTutorialStep(5);
         setMatch({
@@ -3233,13 +3290,13 @@ function App() {
       updated.tokens = shiftFormationWithBall(updated.tokens, match.ball.x, nx, player.player.id, match.half);
       const shiftedCarrier = updated.tokens.find((token) => token.player.id === player.player.id);
       if (shiftedCarrier) updated.ball = { x: shiftedCarrier.x, y: shiftedCarrier.y };
-      playPitchFx("pass", updated.ball, "NUTMEG!", { x: player.x, y: player.y });
+      playPitchFx("pass", updated.ball, "NUTMEG!", { x: player.x, y: player.y }, player.side);
       spendAction(updated, `${player.player.name} nutmegs ${defender.player.name}! ${Math.round(nutmegRoll.chance)}% odds — bonus drive and action earned.`, true);
     } else {
       const opponentSide = player.side === "home" ? "away" : "home";
       const tokens = shiftFormationWithBall(nutmegRoll.match.tokens, match.ball.x, defender.x, defender.player.id, match.half);
       const shiftedDefender = tokens.find((token) => token.player.id === defender.player.id) ?? defender;
-      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "TACKLED!", { x: player.x, y: player.y });
+      playPitchFx("steal", { x: shiftedDefender.x, y: shiftedDefender.y }, "TACKLED!", { x: player.x, y: player.y }, defender.side);
       setMatch({
         ...nutmegRoll.match,
         tokens,
@@ -3406,6 +3463,18 @@ function App() {
               detail: "Move upfield into shooting range, then click SHOOT to finish the drill (+150 XP & +50 coins).",
             }
             : null;
+  const fxTeamColor = pitchFx?.side
+    ? kitColorById(pitchFx.side === "home" ? homeKitColorId : awayKitColorId).value
+    : "#4fd9c8";
+  const fxColor = pitchFx
+    ? pitchFx.kind === "goal"
+      ? "#b9ffe4"
+      : pitchFx.kind === "intercept" || pitchFx.kind === "miss"
+        ? "#e8775d"
+        : pitchFx.kind === "steal"
+          ? "#f2d79a"
+          : fxTeamColor
+    : "#4fd9c8";
   const homeLuck = luckPercent(match.luck.home);
   const awayLuck = luckPercent(match.luck.away);
   const luckChecks = Math.max(match.luck.home.attempts, match.luck.away.attempts);
@@ -3556,7 +3625,7 @@ function App() {
         .pitch-vfx-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:6}
         .vfx-line{fill:none;stroke-linecap:round;stroke-width:2.2;stroke-dasharray:260;stroke-dashoffset:260;animation:vfx-draw .55s cubic-bezier(.22,1,.36,1) forwards}
         @keyframes vfx-draw{0%{stroke-dashoffset:260;opacity:1}72%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}
-        .pitch-callout{position:absolute;z-index:7;transform:translate(-50%,-120%);padding:4px 10px;border-radius:7px;font:800 clamp(9px,1.1cqw,13px) 'DM Mono',monospace;letter-spacing:.08em;color:#fff;background:#0c1a16eb;border:1px solid #4fd9c8a6;box-shadow:0 6px 18px #000a;pointer-events:none;white-space:nowrap;animation:callout-pop 1.15s cubic-bezier(.22,1,.36,1) forwards}
+        .pitch-callout{position:absolute;z-index:7;transform:translate(-50%,-120%);padding:4px 10px;border-radius:7px;font:800 clamp(9px,1.1cqw,13px) 'DM Mono',monospace;letter-spacing:.08em;color:#fff;background:#0c1a16eb;border:1px solid color-mix(in srgb,var(--fx-color,#4fd9c8) 65%,transparent);box-shadow:0 6px 18px #000a,0 0 12px color-mix(in srgb,var(--fx-color,#4fd9c8) 30%,transparent);pointer-events:none;white-space:nowrap;animation:callout-pop 1.15s cubic-bezier(.22,1,.36,1) forwards}
         .pitch-callout.goal{border-color:#b9ffe4;color:#eafff7;background:#0f3a30f2}
         .pitch-callout.steal{border-color:#f2d79a;color:#fff7e6;background:#2f2a1aef}
         .pitch-callout.intercept,.pitch-callout.miss{border-color:#e8775d;color:#ffe7e0;background:#3a1c17ef}
@@ -3589,6 +3658,20 @@ function App() {
         .tutorial-reward{display:inline-block;margin:12px 0 18px;padding:10px 16px;border:1px solid #8ff2c866;border-radius:9px;color:#d8ffef;font:12px 'DM Mono',monospace;background:#8ff2c814}
         .tutorial-dialog .victory-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap}
         .action.recommended{border-color:#b9ffe4;background:#b9ffe414;color:#eafff8;box-shadow:0 0 0 1px #b9ffe455,0 0 16px #b9ffe41f}
+        .kit-select{position:relative;min-width:220px}
+        .kit-select-trigger{display:flex;align-items:center;gap:9px;width:100%;background:#152b24;color:#e7f3ed;border:1px solid #35534a;border-radius:8px;padding:9px 11px;font:600 11px Manrope,Arial,sans-serif;text-align:left}
+        .kit-select-trigger:hover{border-color:#8ff2c877}
+        .kit-select.open .kit-select-trigger{border-color:#8ff2c8;box-shadow:0 0 0 2px #8ff2c824}
+        .kit-swatch{width:18px;height:18px;border-radius:50%;border:1px solid #ffffff55;flex:0 0 auto;box-shadow:inset 0 0 0 1px #0003}
+        .kit-select-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .kit-chevron{color:#8ff2c8;font-size:10px}
+        .kit-select-menu{position:absolute;z-index:25;top:calc(100% + 6px);right:0;min-width:100%;width:max-content;max-width:290px;max-height:250px;overflow:auto;background:#101c18;border:1px solid #35534a;border-radius:10px;padding:5px;box-shadow:0 18px 44px #000c;animation:kit-menu-in .16s ease both}
+        .kit-option{display:flex;align-items:center;gap:9px;width:100%;background:transparent;color:#dbece4;border-radius:7px;padding:8px 9px;font:600 11px Manrope,Arial,sans-serif;text-align:left}
+        .kit-option:hover{background:#ffffff0a;color:#fff}
+        .kit-option.selected{background:#8ff2c814;color:#eafff8}
+        .kit-check{width:14px;text-align:center;color:#8ff2c8;font-size:11px}
+        @keyframes kit-menu-in{0%{opacity:0;transform:translateY(-4px)}100%{opacity:1;transform:translateY(0)}}
+        @media(max-width:520px){.kit-select{min-width:0;width:100%}.kit-select-menu{left:0;right:auto;width:100%;max-width:none}}
         @media(prefers-reduced-motion:reduce){
           .screen-enter,.move-marker,.ball-loose,.vfx-line,.pitch-callout,.goal-banner,.goal-banner-card,.goal-net-flash,.pitch-goal-flash,.cell.goal-target,.cell.tutorial-target-cell,.token.tutorial-highlight{animation:none!important}
           .pitch,.pitch-token-slot,.pitch-ball-slot,.token,button{transition:none!important}
@@ -3766,12 +3849,12 @@ function App() {
           <div className="panel-heading"><h2>Club kits</h2><span>{unlockedTeamColors.length} colors unlocked</span></div>
           <p className="small-note" style={{ lineHeight: 1.7 }}>Choose colors for your team and the opposition. Earn more colors from any crate; every crate includes a color drop.</p>
           <div className="setting-row">
-            <div className="setting-copy"><strong>Your team</strong><small><span className="kit-preview" style={{ background: kitColorById(homeKitColorId).value }} />{kitColorById(homeKitColorId).name}</small></div>
-            <div className="setting-options"><select aria-label="Your team color" value={homeKitColorId} onChange={(event) => setHomeKitColorId(event.target.value)}>{unlockedTeamColors.map((id) => <option key={id} value={id}>{kitColorById(id).name}</option>)}</select></div>
+            <div className="setting-copy"><strong>Your team</strong><small>Used on your tokens, pass trails, and movement trails.</small></div>
+            <div className="setting-options"><KitColorPicker label="Your team color" value={homeKitColorId} options={unlockedTeamColors} onChange={setHomeKitColorId} /></div>
           </div>
           <div className="setting-row">
-            <div className="setting-copy"><strong>Opposition team</strong><small><span className="kit-preview" style={{ background: kitColorById(awayKitColorId).value }} />{kitColorById(awayKitColorId).name}</small></div>
-            <div className="setting-options"><select aria-label="Opposition team color" value={awayKitColorId} onChange={(event) => setAwayKitColorId(event.target.value)}>{unlockedTeamColors.map((id) => <option key={id} value={id}>{kitColorById(id).name}</option>)}</select></div>
+            <div className="setting-copy"><strong>Opposition team</strong><small>Used on the opposing tokens and their pass and movement trails.</small></div>
+            <div className="setting-options"><KitColorPicker label="Opposition team color" value={awayKitColorId} options={unlockedTeamColors} onChange={setAwayKitColorId} /></div>
           </div>
           {teamColorsSimilar
             ? <div className="kit-warning" role="alert">⚠ Team colors are the same or too similar. Choose different colors so both sides are easy to tell apart.</div>
@@ -3901,8 +3984,8 @@ function App() {
           <button className="quickplay-option" onClick={startCpuQuickplay}>
             <span className="quickplay-icon">🤖</span>
             <strong>CPU · {fmt(activeFormat).name}</strong>
-            <p>Play on your own against the computer. The opponent gets stronger as your campaign level rises.</p>
-            <span className="badge">PLAY NOW</span>
+            <p>Play on your own against the computer at difficulty level {aiDifficulty}. Higher levels field stronger players, sharper tactics, and deeper lookahead.</p>
+            <span className="badge">PLAY LEVEL {aiDifficulty}</span>
           </button>
           <button className="quickplay-option" onClick={startLocalQuickplay}>
             <span className="quickplay-icon">👥</span>
@@ -4032,9 +4115,9 @@ function App() {
               </div>
             </div>
             {pitchFx && <svg className="pitch-vfx-svg" viewBox="0 0 220 110" preserveAspectRatio="none" aria-hidden="true" key={pitchFx.id}>
-              <line className="vfx-line" x1={(pitchFx.from.x + 0.5) * 10} y1={(pitchFx.from.y + 0.5) * 10} x2={(pitchFx.to.x + 0.5) * 10} y2={(pitchFx.to.y + 0.5) * 10} stroke={pitchFx.kind === "goal" ? "#b9ffe4" : pitchFx.kind === "intercept" || pitchFx.kind === "miss" ? "#e8775d" : pitchFx.kind === "steal" ? "#f2d79a" : "#4fd9c8"} />
+              <line className="vfx-line" x1={(pitchFx.from.x + 0.5) * 10} y1={(pitchFx.from.y + 0.5) * 10} x2={(pitchFx.to.x + 0.5) * 10} y2={(pitchFx.to.y + 0.5) * 10} stroke={fxColor} />
             </svg>}
-            {pitchFx?.label && <div className={`pitch-callout ${pitchFx.kind}`} style={{ left: `${(pitchFx.to.x + 0.5) / 22 * 100}%`, top: `${(pitchFx.to.y + 0.5) / 11 * 100}%` }} aria-hidden="true" key={`callout-${pitchFx.id}`}>{pitchFx.label}</div>}
+            {pitchFx?.label && <div className={`pitch-callout ${pitchFx.kind}`} style={{ left: `${(pitchFx.to.x + 0.5) / 22 * 100}%`, top: `${(pitchFx.to.y + 0.5) / 11 * 100}%`, "--fx-color": fxColor } as CSSProperties} aria-hidden="true" key={`callout-${pitchFx.id}`}>{pitchFx.label}</div>}
             <div className="goal-overlay" aria-hidden="true"><span className="penalty-box left" /><span className="penalty-box right" /><span className="goal-frame left" /><span className="goal-frame right" /></div>
             {goalBanner && <><div className="pitch-goal-flash" aria-hidden="true" /><div className={`goal-net-flash ${goalBanner.side === "home" ? "right" : "left"}`} aria-hidden="true" /></>}
             {goalBanner && <div className="goal-banner" aria-live="assertive">

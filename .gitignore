@@ -1,5 +1,6 @@
 node_modules/
 dist/
 *.tsbuildinfo
+.rush-test/
 .env*
 !.env.example

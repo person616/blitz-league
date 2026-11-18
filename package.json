@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "server": "node server.mjs",
     "train:ai": "node scripts/evolve-ai.mjs",
-    "train:real-match-policy": "node scripts/train-real-match-policy.mjs"
+    "train:real-match-policy": "node scripts/train-real-match-policy.mjs",
+    "test:rush": "node scripts/test-league-rush.mjs"
   },
   "dependencies": {
     "react": "^19.1.1",

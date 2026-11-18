@@ -4,6 +4,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import realMatchPolicy from "./real-match-policy.json";
 import evolvedAiFile from "./evolved-ai-ladder.json";
+import {
+  LEAGUE_RUSH_CONCEDE_LIMIT,
+  LEAGUE_RUSH_GOAL_TARGET,
+  rollRushAbilities,
+  rushAbilities,
+  rushAbilityById,
+  rushDifficultyForGame,
+  rushEffectLabels,
+  rushEffectSummary,
+  rushModsFor,
+  rushRarityMeta,
+  rushRarityOrder,
+  emptyRushMods,
+  type RushAbility,
+} from "./league-rush";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
@@ -71,7 +86,41 @@ export type Match = {
   bonusActions: number;
   luck: MatchLuck;
   finished?: boolean;
+  rushGoalTarget?: number;
+  rushConcedeLimit?: number;
+  rushConceded?: number;
+  rushGame?: number;
+  rushLevel?: number;
+  rushHomeAbility?: string;
+  rushAwayAbility?: string;
 };
+
+type RushRun = {
+  status: "draft" | "prep" | "playing" | "over";
+  game: number;
+  conceded: number;
+  difficulty: number;
+  buffs: string[];
+  buffChoices: string[];
+  abilityChoices: string[];
+  playerAbility: string | null;
+  enemyAbility: string | null;
+  wins: number;
+  totalScored: number;
+  xpEarned: number;
+  coinsEarned: number;
+  result: "conceded" | "time" | null;
+  history: { game: number; enemyAbility: string; scored: number; conceded: number; won: boolean }[];
+};
+
+// League Rush modifiers are derived per side and read by the shared match
+// maths. Campaign, quickplay, local and online matches keep zero modifiers.
+let activeRushMods = { home: emptyRushMods(), away: emptyRushMods() };
+const modsFor = (side: "home" | "away") => activeRushMods[side];
+const applyRushMods = (homeIds: (string | null | undefined)[], awayIds: (string | null | undefined)[]) => {
+  activeRushMods = { home: rushModsFor(homeIds), away: rushModsFor(awayIds) };
+};
+const isRushMatch = (state: Match) => typeof state.rushGoalTarget === "number";
 
 const roster: Player[] = [
   { id: "messi", name: "Lionel Messi", club: "Inter Miami CF", position: "FWD", rating: 91, ability: "Deadeye · elite close control", abilityType: "dribbling", abilityStat: 96, color: "#f36b87" },
@@ -367,6 +416,24 @@ function KitColorPicker({ label, value, options, onChange }: {
     </div>}
   </div>;
 }
+function RushAbilityCard({ ability, onSelect, tag, disabled = false }: {
+  ability: RushAbility;
+  onSelect: () => void;
+  tag?: string;
+  disabled?: boolean;
+}) {
+  const meta = rushRarityMeta[ability.rarity];
+  return <button type="button" className={`rush-card rarity-${ability.rarity}`}
+    style={{ "--rarity": meta.color } as CSSProperties} disabled={disabled} onClick={onSelect}>
+    <span className="rush-rarity">{meta.label}</span>
+    <strong>{ability.name}</strong>
+    <p>{ability.blurb}</p>
+    <span className="rush-effects">{rushEffectLabels(ability).map((effect) =>
+      <span key={effect.key} className={effect.value < 0 ? "negative" : ""}>{effect.text}</span>)}</span>
+    {tag && <span className="rush-card-tag">{tag}</span>}
+  </button>;
+}
+
 const formatCountdown = (milliseconds: number) => {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const days = Math.floor(totalSeconds / 86400);
@@ -551,6 +618,14 @@ const shotRange = (player: Player) =>
   7 + (player.abilityType === "finishing" && player.abilityStat >= 90 ? 1 : 0);
 const nutmegChance = (player: Player) =>
   cap(50 + abilityEffect(player, "dribbling") * 0.1, 45, 56);
+// League Rush aware wrappers. They fold the team's ability modifiers into the
+// same formulas the campaign and quickplay already use.
+const moveRangeFor = (token: Token) => 2 + movementBonus(token.player) + modsFor(token.side).move;
+const passReachFor = (token: Token) => passingRange(token.player) + modsFor(token.side).passRange;
+const shotReachFor = (token: Token) => shotRange(token.player) + modsFor(token.side).shotRange;
+const nutmegChanceFor = (token: Token) => cap(nutmegChance(token.player) + modsFor(token.side).nutmeg, 40, 64);
+const clearAccuracyFor = (token: Token, distanceToTarget: number) =>
+  cap(goalkeeperClearAccuracy(token.player, distanceToTarget) + modsFor(token.side).clear, 12, 92);
 const abilityDescription = (player: Player) =>
   `${player.ability} · Ability ${player.abilityStat} ×2 (${player.abilityType})${player.position === "GK" ? ` · Clearing ${goalkeeperClearing(player)}` : ""} · OVR ${overallRating(player)}`;
 const displayKey = (code: string | null) => {
@@ -562,7 +637,9 @@ const displayKey = (code: string | null) => {
 };
 const goalkeeperPenalty = (tokens: Token[], attackingSide: "home" | "away") => {
   const keeper = tokens.find((token) => token.side !== attackingSide && token.player.position === "GK");
-  return keeper ? cap(Math.round(abilityEffect(keeper.player, "goalkeeping") * 0.12), 0, 5) : 0;
+  if (!keeper) return 0;
+  const keeperMod = modsFor(keeper.side).keeper;
+  return cap(Math.round(abilityEffect(keeper.player, "goalkeeping") * 0.12) + keeperMod, 0, 5 + keeperMod);
 };
 const goalkeeperClearing = (player: Player) => player.clearing ?? (player.position === "GK" ? player.rating : 50);
 const defendingGoalX = (side: "home" | "away", half: 1 | 2) =>
@@ -593,7 +670,7 @@ const resolveGoalkeeperClearance = (match: Match, keeper: Token) => {
     : (match.half === 1 ? -1 : 1);
   const target = goalkeeperClearTarget(keeper, match.tokens, match.half);
   const clearDistance = distance(keeper, target);
-  const accuracy = goalkeeperClearAccuracy(keeper.player, clearDistance);
+  const accuracy = clearAccuracyFor(keeper, clearDistance);
   const opponentSide = keeper.side === "home" ? "away" : "home";
   const interception = findInterceptor(match.tokens, keeper.side, lineCells(keeper, target));
   let luckState = match;
@@ -649,7 +726,8 @@ const shotAccuracy = (player: Token, tokens: Token[], tilesToGoal: number, angle
       + (player.player.position === "FWD" ? 5 : 0)
       - angleDegrees * 0.65
       - goalkeeperPenalty(tokens, player.side)
-      - defenderPenalty(tokens, player),
+      - defenderPenalty(tokens, player)
+      + modsFor(player.side).shot,
     8,
     94,
   );
@@ -658,7 +736,8 @@ const interceptionChance = (defender: Token, type: "shot" | "pass", laneGap = 0)
     + abilityEffect(defender.player, "goalkeeping") * 0.08
     + (defender.player.position === "DEF" ? 10 : 0)
     + (defender.player.position === "GK" ? 15 : 0)
-    + (type === "shot" ? 5 : 0) - laneGap * 14, 8, 68);
+    + (type === "shot" ? 5 : 0) - laneGap * 14
+    + modsFor(defender.side).intercept, 8, 68);
 const stealChanceFor = (defender: Token, carrier: Token, half: 1 | 2 = 1) => {
   const carrierAttackDirection = carrier.side === "home" ? (half === 1 ? 1 : -1) : (half === 1 ? -1 : 1);
   const relativePosition = (defender.x - carrier.x) * carrierAttackDirection;
@@ -667,7 +746,8 @@ const stealChanceFor = (defender: Token, carrier: Token, half: 1 | 2 = 1) => {
   return cap(45 + abilityEffect(defender.player, "defending") * 0.08
     + (defender.player.position === "DEF" ? 6 : 0)
     + (isInFront ? 8 : 0)
-    - (isBehind ? 14 : 0), 15, 70);
+    - (isBehind ? 14 : 0)
+    + modsFor(defender.side).steal, 15, 70);
 };
 const lineCells = (from: { x: number; y: number }, to: { x: number; y: number }) => {
   const points: { x: number; y: number }[] = [];
@@ -931,7 +1011,7 @@ const attackingActionOptions = (
   const urgency = difference < 0 ? late : difference > 0 ? -late * 0.45 : late * 0.25;
   const options: AiActionOption[] = [];
 
-  if (goalDistance <= shotRange(owner.player)) {
+  if (goalDistance <= shotReachFor(owner)) {
     const chance = shotAccuracy(owner, tokens, goalDistance, shotAngleDegrees(owner, match.half));
     const goal = { x: match.half === 1 ? 0 : 21, y: 5 };
     const interceptor = findInterceptor(tokens, owner.side, lineCells(owner, goal));
@@ -947,18 +1027,18 @@ const attackingActionOptions = (
 
   for (const receiver of teammates) {
     const gap = distance(owner, receiver);
-    if (gap === 0 || gap > passingRange(owner.player)) continue;
+    if (gap === 0 || gap > passReachFor(owner)) continue;
     const interceptor = findInterceptor(tokens, owner.side, lineCells(owner, receiver).slice(0, -1));
     const blockRisk = interceptor ? interceptionChance(interceptor.token, "pass", interceptor.gap) : 0;
     const success = 1 - blockRisk / 100;
     const progress = goalDistance - ownGoalDistance(receiver, match.half);
     const receiverGap = nearestOpponentGap(tokens, receiver, receiver.side);
     const receiverGoalDistance = ownGoalDistance(receiver, match.half);
-    const receiverShot = receiverGoalDistance <= shotRange(receiver.player)
+    const receiverShot = receiverGoalDistance <= shotReachFor(receiver)
       ? shotAccuracy(receiver, tokens, receiverGoalDistance, shotAngleDegrees(receiver, match.half)) / 100
       : 0;
     const support = teammates.filter((mate) => mate.player.id !== receiver.player.id
-      && distance(mate, receiver) <= passingRange(receiver.player)).length;
+      && distance(mate, receiver) <= passReachFor(receiver)).length;
     const safeOutlet = pressureGap <= 2 && progress <= 1 ? 0.10 : 0;
     const value = success * (0.055 + progress * 0.012 + receiverShot * 0.52
       + Math.min(receiverGap, 5) * 0.017 + support * 0.006 + safeOutlet)
@@ -971,7 +1051,7 @@ const attackingActionOptions = (
     });
   }
 
-  const moveDistance = 2 + movementBonus(owner.player);
+  const moveDistance = moveRangeFor(owner);
   const carryMove = findBestReachableMove(tokens, owner, moveDistance, (point) => {
     const advance = goalDistance - ownGoalDistance({ ...owner, x: point.x, y: point.y }, match.half);
     const space = nearestOpponentGap(tokens, point, owner.side);
@@ -986,7 +1066,7 @@ const attackingActionOptions = (
     const space = nearestOpponentGap(tokens, carryMove, owner.side);
     const retention = cap(0.48 + strategy.progression * 0.42
       - (space <= 1 ? 0.24 : space <= 2 ? 0.10 : 0), 0.18, 0.95);
-    const shotEntry = ownGoalDistance(projected, match.half) <= shotRange(owner.player);
+    const shotEntry = ownGoalDistance(projected, match.half) <= shotReachFor(owner);
     const value = retention * (0.045 + advance * 0.016 + Math.min(space, 5) * 0.018 + (shotEntry ? 0.11 : 0))
       - (1 - retention) * 0.17;
     options.push({
@@ -1023,7 +1103,7 @@ const defensiveMoveOptions = (
   return tokens.filter((token) => token.side !== carrier.side && token.player.position !== "GK")
     .map((defender) => {
       const pressureDistance = distance(defender, carrier) <= 3 || strategy.pressing > 0.65 ? 1 : 2;
-      const moveDistance = 2 + movementBonus(defender.player);
+      const moveDistance = moveRangeFor(defender);
       const move = findBestReachableMove(tokens, defender, moveDistance, (point) => {
         const carrierGap = Math.max(Math.abs(point.x - carrier.x), Math.abs(point.y - carrier.y));
         const laneGap = lane.length ? Math.min(...lane.map((lanePoint) => distance(point, lanePoint))) : 99;
@@ -1103,7 +1183,7 @@ const tacticalEvaluation = (state: TacticalState) => {
 
   if (owner) {
     const goalDistance = ownGoalDistance(owner, state.half);
-    if (goalDistance <= shotRange(owner.player)) {
+    if (goalDistance <= shotReachFor(owner)) {
       const accuracy = shotAccuracy(owner, state.tokens, goalDistance, shotAngleDegrees(owner, state.half));
       value += (owner.side === "away" ? 1 : -1) * (accuracy - 35) * 1.1;
     }
@@ -1153,7 +1233,7 @@ const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): Tactic
   const actions: TacticalAction[] = [];
   if (owner?.side === side) {
     const goalDistance = ownGoalDistance(owner, state.half);
-    if (goalDistance <= shotRange(owner.player)) {
+    if (goalDistance <= shotReachFor(owner)) {
       actions.push({ kind: "shoot", tokenId: owner.player.id });
     }
     if (owner.player.position === "GK" && isInOwnPenaltyBox(owner, state.half)) {
@@ -1161,7 +1241,7 @@ const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): Tactic
     }
     const receivers = state.tokens
       .filter((token) => token.side === side && token.player.id !== owner.player.id
-        && distance(owner, token) <= passingRange(owner.player))
+        && distance(owner, token) <= passReachFor(owner))
       .map((token) => ({
         token,
         score: (goalDistance - ownGoalDistance(token, state.half)) * 1.2
@@ -1172,7 +1252,7 @@ const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): Tactic
     for (const { token } of receivers) {
       actions.push({ kind: "pass", fromId: owner.player.id, toId: token.player.id });
     }
-    const carries = tacticalReachablePoints(state, owner, 2 + movementBonus(owner.player))
+    const carries = tacticalReachablePoints(state, owner, moveRangeFor(owner))
       .map((point) => ({
         point,
         score: (goalDistance - tacticalGoalDistance(point, side, state.half)) * 1.4
@@ -1198,7 +1278,7 @@ const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): Tactic
       .sort((a, b) => a.gap - b.gap)
       .slice(0, 4);
     for (const { defender } of closest) {
-      const moves = tacticalReachablePoints(state, defender, 2 + movementBonus(defender.player))
+      const moves = tacticalReachablePoints(state, defender, moveRangeFor(defender))
         .map((point) => ({
           point,
           score: -distance(point, owner) * 1.5
@@ -1219,7 +1299,7 @@ const tacticalActionsFor = (state: TacticalState, side: "home" | "away"): Tactic
     .sort((a, b) => a.gap - b.gap)
     .slice(0, 3);
   for (const { token } of chasers) {
-    const moves = tacticalReachablePoints(state, token, 2 + movementBonus(token.player))
+    const moves = tacticalReachablePoints(state, token, moveRangeFor(token))
       .map((point) => ({ point, score: -distance(point, state.ball) * 2 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 2);
@@ -1306,7 +1386,7 @@ const applyTacticalAction = (
   const keeper = tokens.find((token) => token.player.id === action.tokenId);
   if (!keeper) return state;
   const target = goalkeeperClearTarget(keeper, tokens, state.half);
-  const accuracy = goalkeeperClearAccuracy(keeper.player, distance(keeper, target));
+  const accuracy = clearAccuracyFor(keeper, distance(keeper, target));
   const clearance = outcome === "success" || accuracy >= 50
     ? target
     : { x: cap(target.x + (keeper.side === "away" ? 1 : -1) * 2, 1, 20), y: cap(target.y + 1, 0, 10) };
@@ -1827,7 +1907,7 @@ function App() {
   const [crateRevealed, setCrateRevealed] = useState(false);
   const [playerSort, setPlayerSort] = useState<PlayerSort>("default");
   const [activeFormat, setActiveFormat] = useState<FormatId>("classic");
-  const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "settings">("home");
+  const [screen, setScreen] = useState<"home" | "campaign" | "match" | "victory" | "locker" | "pass" | "store" | "quickplay" | "rush" | "settings">("home");
   const [level, setLevel] = useState(() => devToolsEnabled ? campaignStageCount : 1);
   const [aiDifficulty, setAiDifficulty] = useState(1);
   const [humanPlayStyle, setHumanPlayStyle] = useState<HumanPlayStyle>(emptyHumanPlayStyle);
@@ -1835,7 +1915,9 @@ function App() {
   const [notice, setNotice] = useState("");
   const [saveReady, setSaveReady] = useState(false);
   const [quickplaySide, setQuickplaySide] = useState<"home" | "away" | null>(null);
-  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | "tutorial" | null>(null);
+  const [quickplayMode, setQuickplayMode] = useState<"cpu" | "local" | "online" | "tutorial" | "rush" | null>(null);
+  const [rush, setRush] = useState<RushRun | null>(null);
+  const rushRef = useRef<RushRun | null>(null);
   const [joinRoomCode, setJoinRoomCode] = useState("");
   const [onlineRoomCode, setOnlineRoomCode] = useState("");
   const [onlineStatus, setOnlineStatus] = useState("");
@@ -2252,6 +2334,18 @@ function App() {
     tutorialLive.current = screen === "match" && quickplayMode === "tutorial";
   }, [screen, quickplayMode]);
 
+  useEffect(() => {
+    rushRef.current = rush;
+    if (!isRushMatch(match)) {
+      activeRushMods = { home: emptyRushMods(), away: emptyRushMods() };
+      return;
+    }
+    applyRushMods(
+      match.rushHomeAbility ? [match.rushHomeAbility, ...(rush?.buffs ?? [])] : [],
+      match.rushAwayAbility ? [match.rushAwayAbility] : [],
+    );
+  }, [rush, match.rushGoalTarget, match.rushHomeAbility, match.rushAwayAbility]);
+
   useEffect(() => () => {
     window.clearTimeout(pitchFxTimer.current);
     window.clearTimeout(goalBannerTimer.current);
@@ -2324,6 +2418,9 @@ function App() {
     setGoalBanner(null);
     setPitchFx(null);
     setQuickplayMode(null);
+    setRush(null);
+    rushRef.current = null;
+    activeRushMods = { home: emptyRushMods(), away: emptyRushMods() };
   }
 
   function connectOnline(action: "create-room" | "join-room") {
@@ -2448,6 +2545,77 @@ function App() {
     setScreen("match");
   }
 
+  const rushChoices = (exclude: string[] = [], count = 3, level = 75) =>
+    rollRushAbilities(Math.random, count, level, exclude).map((ability) => ability.id);
+
+  function openLeagueRush() {
+    const difficulty = rushDifficultyForGame(1);
+    setRush({
+      status: "draft",
+      game: 1,
+      conceded: 0,
+      difficulty,
+      buffs: [],
+      buffChoices: rushChoices([], 3, difficulty),
+      abilityChoices: [],
+      playerAbility: null,
+      enemyAbility: null,
+      wins: 0,
+      totalScored: 0,
+      xpEarned: 0,
+      coinsEarned: 0,
+      result: null,
+      history: [],
+    });
+    setScreen("rush");
+  }
+
+  function chooseRushBuff(id: string) {
+    const run = rushRef.current;
+    if (!run || run.status !== "draft") return;
+    const buffs = [...run.buffs, id];
+    setRush({ ...run, buffs, buffChoices: [], abilityChoices: rushChoices(buffs, 3, run.difficulty), status: "prep" });
+  }
+
+  function chooseRushAbility(id: string) {
+    const run = rushRef.current;
+    if (!run || run.status !== "prep") return;
+    const enemy = rollRushAbilities(Math.random, 1, run.difficulty, [...run.buffs, id])[0];
+    startRushMatch({ ...run, playerAbility: id, enemyAbility: enemy.id, status: "playing" });
+  }
+
+  function startRushMatch(run: RushRun) {
+    if (!run.playerAbility || !run.enemyAbility) return;
+    setPassMode(false);
+    const freshStyle = emptyHumanPlayStyle();
+    setHumanPlayStyle(freshStyle);
+    const strategy = adaptAiStrategy(aiStrategyForLevel(run.difficulty), freshStyle, run.difficulty);
+    const cpuRoster = aiOpponentRoster(run.difficulty);
+    const cpuLineup = chooseAiFormation(cpuRoster, strategy, freshStyle);
+    const initial = makeMatch(cpuRoster, run.difficulty, "classic", homePlayers, activeFormation,
+      formationAssignments[activeFormationId] ?? {}, cpuLineup.formation, cpuLineup.assignments);
+    initial.rushGoalTarget = LEAGUE_RUSH_GOAL_TARGET;
+    initial.rushConcedeLimit = LEAGUE_RUSH_CONCEDE_LIMIT;
+    initial.rushConceded = run.conceded;
+    initial.rushGame = run.game;
+    initial.rushLevel = run.difficulty;
+    initial.rushHomeAbility = run.playerAbility;
+    initial.rushAwayAbility = run.enemyAbility;
+    const remaining = LEAGUE_RUSH_CONCEDE_LIMIT - run.conceded;
+    initial.message = `League Rush · Game ${run.game} · opposition level ${run.difficulty} · score ${LEAGUE_RUSH_GOAL_TARGET} to win · ${remaining} goal${remaining === 1 ? "" : "s"} left in the concession budget.`;
+    applyRushMods([run.playerAbility, ...run.buffs], [run.enemyAbility]);
+    setRush(run);
+    setQuickplaySide(null);
+    setQuickplayMode("rush");
+    setMatch(initial);
+    setScreen("match");
+  }
+
+  function exitLeagueRush() {
+    stopQuickplay();
+    setScreen("quickplay");
+  }
+
   function startMatch(nextLevel = level) {
     if (nextLevel > level || nextLevel > campaignStageCount) return;
     setPassMode(false);
@@ -2556,7 +2724,7 @@ function App() {
         playPitchFx("pass", clearance.ball, "CLEARED!", { x: owner.x, y: owner.y }, owner.side);
       } else {
         const receiver = ai.tokens.filter((token) => token.side === owner.side && token.player.position !== "GK"
-          && distance(owner, token) <= passingRange(owner.player)
+          && distance(owner, token) <= passReachFor(owner)
           && ownGoalDistance(token, ai.half) < ownGoalDistance(owner, ai.half))
           .sort((a, b) => ownGoalDistance(a, ai.half) - ownGoalDistance(b, ai.half))[0];
         const interception = receiver
@@ -2602,6 +2770,12 @@ function App() {
           ai.stealProtectedSide = undefined;
           ai.message = `The opposition scores! ${ai.score[0]}–${ai.score[1]}.`;
           playPitchFx("goal", goal, "GOAL!", { x: owner.x, y: owner.y }, owner.side);
+          if (isRushMatch(ai)) {
+            // Every goal conceded comes out of the run's five-goal budget.
+            ai.rushConceded = (ai.rushConceded ?? 0) + 1;
+            setMatch(finishOrSet(ai));
+            return;
+          }
           if (ai.score[1] >= goalTarget) {
             setMatch(finishOrSet(ai));
             return;
@@ -2725,7 +2899,7 @@ function App() {
           && (!nearestHome || distance(nearestAway, ai.ball) <= distance(nearestHome, ai.ball) + 2)
           && !ai.tokens.some((token) => token.x === ai.ball.x && token.y === ai.ball.y)) {
           const route = findRouteToTargets(ai.tokens, nearestAway, [ai.ball]);
-          const moveDistance = 2 + movementBonus(nearestAway.player)
+          const moveDistance = moveRangeFor(nearestAway)
             + (strategy.countering > 0.75 ? 1 : 0);
           const next = route[Math.min(moveDistance, route.length) - 1]
             ?? findBestReachableMove(ai.tokens, nearestAway, moveDistance, (point) =>
@@ -2749,7 +2923,7 @@ function App() {
           const cover = ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK")
             .map((defender) => ({
               defender,
-              move: findBestReachableMove(ai.tokens, defender, 2 + movementBonus(defender.player), (point) =>
+              move: findBestReachableMove(ai.tokens, defender, moveRangeFor(defender), (point) =>
                 -distance(point, ai.ball) * 0.55
                   - Math.abs(point.y - 5) * 0.9
                   - ai.tokens.filter((token) => token.side === "home")
@@ -2784,7 +2958,7 @@ function App() {
         const defenders = ai.tokens.filter((token) => token.side === "away" && token.player.position !== "GK");
         const bestDefender = defenders.map((defender) => ({
           defender,
-          move: findBestReachableMove(ai.tokens, defender, 2 + movementBonus(defender.player), (point) => {
+          move: findBestReachableMove(ai.tokens, defender, moveRangeFor(defender), (point) => {
             const laneGap = Math.min(...pathToGoal.map((pathPoint) =>
               Math.abs(point.x - pathPoint.x) + Math.abs(point.y - pathPoint.y)));
             const gap = Math.max(Math.abs(point.x - currentCarrier.x), Math.abs(point.y - currentCarrier.y));
@@ -2813,7 +2987,7 @@ function App() {
             .sort((a, b) => distance(a, ai.ball) - distance(b, ai.ball))[0];
         if (moveTarget) {
           const isCarrier = currentCarrier?.player.id === moveTarget.player.id;
-          const move = findBestReachableMove(ai.tokens, moveTarget, 2 + movementBonus(moveTarget.player), (point) =>
+          const move = findBestReachableMove(ai.tokens, moveTarget, moveRangeFor(moveTarget), (point) =>
             isCarrier
               ? -ownGoalDistance({ ...moveTarget, x: point.x, y: point.y }, ai.half) * 3 - Math.abs(point.y - 5) * 0.3
               : -distance(point, ai.ball) * 2,
@@ -2845,6 +3019,95 @@ function App() {
   }
 
   function finishOrSet(state: Match, fullTime = false): Match {
+    if (isRushMatch(state)) {
+      const target = state.rushGoalTarget ?? LEAGUE_RUSH_GOAL_TARGET;
+      const limit = state.rushConcedeLimit ?? LEAGUE_RUSH_CONCEDE_LIMIT;
+      const conceded = state.rushConceded ?? 0;
+      const run = rushRef.current;
+      const won = state.score[0] >= target;
+      if (won) {
+        const gameNumber = run?.game ?? state.rushGame ?? 1;
+        const nextGame = gameNumber + 1;
+        const difficulty = rushDifficultyForGame(nextGame);
+        const xpGain = 150 + 25 * gameNumber;
+        const coinGain = 50 + 10 * gameNumber;
+        if (run) {
+          setRush({
+            ...run,
+            status: "draft",
+            game: nextGame,
+            conceded,
+            difficulty,
+            wins: run.wins + 1,
+            totalScored: run.totalScored + state.score[0],
+            xpEarned: run.xpEarned + xpGain,
+            coinsEarned: run.coinsEarned + coinGain,
+            playerAbility: null,
+            enemyAbility: null,
+            abilityChoices: [],
+            buffChoices: rushChoices(run.buffs, 3, difficulty),
+            result: null,
+            history: [...run.history, { game: gameNumber, enemyAbility: state.rushAwayAbility ?? "", scored: state.score[0], conceded: state.score[1], won: true }],
+          });
+        }
+        setXp((value) => value + xpGain);
+        setCoins((value) => value + coinGain);
+        setNotice(`League Rush game won · +${xpGain} XP · +${coinGain} coins`);
+        setPassMode(false);
+        setScreen("rush");
+        return {
+          ...state,
+          turn: "home",
+          drivesUsed: 0,
+          actionsUsed: 0,
+          bonusDrives: 0,
+          bonusActions: 0,
+          finished: true,
+          message: `Game won ${state.score[0]}–${state.score[1]} · run continues.`,
+        };
+      }
+      if (conceded >= limit || fullTime) {
+        if (run) {
+          setRush({
+            ...run,
+            status: "over",
+            conceded,
+            totalScored: run.totalScored + state.score[0],
+            playerAbility: null,
+            enemyAbility: null,
+            abilityChoices: [],
+            buffChoices: [],
+            result: conceded >= limit ? "conceded" : "time",
+            history: [...run.history, { game: run.game, enemyAbility: state.rushAwayAbility ?? "", scored: state.score[0], conceded: state.score[1], won: false }],
+          });
+        }
+        setPassMode(false);
+        setScreen("rush");
+        return {
+          ...state,
+          turn: "home",
+          drivesUsed: 0,
+          actionsUsed: 0,
+          bonusDrives: 0,
+          bonusActions: 0,
+          finished: true,
+          message: conceded >= limit
+            ? `The concession budget is gone (${conceded}/${limit}). Run over.`
+            : `Full time at ${state.score[0]}–${state.score[1]}. You needed ${target} goals. Run over.`,
+        };
+      }
+      return {
+        ...state,
+        turn: "home",
+        drivesUsed: 0,
+        actionsUsed: 0,
+        bonusDrives: 0,
+        bonusActions: 0,
+        selected: closestPlayerId(state.tokens, state.ball, "home"),
+        stealProtectedSide: undefined,
+        message: `Goal · ${state.score[0]}–${state.score[1]} · ${Math.max(0, target - state.score[0])} more to win · ${conceded}/${limit} conceded in this run.`,
+      };
+    }
     if (fullTime || state.score[0] >= goalTarget || state.score[1] >= goalTarget) {
       const won = state.score[0] > state.score[1];
       const tied = state.score[0] === state.score[1];
@@ -2898,7 +3161,7 @@ function App() {
     }
     const steps = distance(player, { x, y });
     const hasBall = match.ball.x === player.x && match.ball.y === player.y;
-    const maxSteps = 2 + movementBonus(player.player);
+    const maxSteps = moveRangeFor(player);
     if (steps > maxSteps) {
       setMatch({ ...match, message: `${player.player.name} can move up to ${maxSteps} tiles this turn.` });
       return;
@@ -2957,7 +3220,7 @@ function App() {
       return;
     }
     const dist = ownGoalDistance(player, match.half);
-    const range = shotRange(player.player);
+    const range = shotReachFor(player);
     if (dist > range) {
       setMatch({ ...match, message: `${player.player.name} is too far out. Max range: ${range} tiles.` });
       return;
@@ -3050,7 +3313,7 @@ function App() {
       const kickoff = resetKickoff(shot.match.tokens, "away", match.half, matchIsSmallSided);
       const next = { ...shot.match, tokens: kickoff.tokens, ball: kickoff.ball, turn: "away" as const, selected: closestPlayerId(kickoff.tokens, kickoff.ball, "away"), stealProtectedSide: undefined, score: [match.score[0] + 1, match.score[1]] as [number, number], message: `${player.player.name} scores from ${dist} tiles out at a ${angle}° angle (${shotChance}% chance). Away restarts from kickoff.` };
       const finished = finishOrSet(next);
-      if (finished.score[0] < goalTarget) {
+      if (finished.score[0] < (match.rushGoalTarget ?? goalTarget)) {
         finished.turn = "away";
         finished.selected = closestPlayerId(finished.tokens, finished.ball, "away");
         finished.drivesUsed = 0;
@@ -3103,7 +3366,7 @@ function App() {
       setMatch({ ...match, message: "Your action is used. Complete your drive or end the turn." });
       return;
     }
-    const passRange = tutorialStep === 2 ? Math.max(14, passingRange(player.player)) : passingRange(player.player);
+    const passRange = tutorialStep === 2 ? Math.max(14, passReachFor(player)) : passReachFor(player);
     const receivers = match.tokens.filter((token) =>
       token.side === player.side
       && token.player.id !== player.player.id
@@ -3129,7 +3392,7 @@ function App() {
       setMatch({ ...match, message: "That pass is no longer available. Select the ball carrier and try again." });
       return;
     }
-    const passRange = tutorialStep === 2 ? Math.max(14, passingRange(player.player)) : passingRange(player.player);
+    const passRange = tutorialStep === 2 ? Math.max(14, passReachFor(player)) : passReachFor(player);
     if (distance(player, receiver) > passRange) {
       setPassMode(false);
       setMatch({ ...match, message: `That teammate is outside passing range (${passRange} tiles).` });
@@ -3274,7 +3537,7 @@ function App() {
       || match.tokens.some((t) => t.x === behindX && t.y === behindY);
     const nx = behindBlocked ? defender.x : behindX;
     const ny = behindBlocked ? defender.y : behindY;
-    const chance = nutmegChance(player.player);
+    const chance = nutmegChanceFor(player);
     const nutmegRoll = rollLuck(match, player.side, defender.side, chance);
     if (nutmegRoll.success) {
       let updated = {
@@ -3357,9 +3620,9 @@ function App() {
   const ownTurn = match.turn === activeSide && !match.finished && !match.halftime
     && (quickplayMode !== "online" || onlineReady);
   const attackingGoalX = activeSide === "home" ? (match.half === 1 ? 21 : 0) : (match.half === 1 ? 0 : 21);
-  const movementRange = selectedPlayer ? 2 + movementBonus(selectedPlayer.player) : 0;
+  const movementRange = selectedPlayer ? moveRangeFor(selectedPlayer) : 0;
   const passReach = selectedPlayer
-    ? (tutorialStep === 2 ? Math.max(14, passingRange(selectedPlayer.player)) : passingRange(selectedPlayer.player))
+    ? (tutorialStep === 2 ? Math.max(14, passReachFor(selectedPlayer)) : passReachFor(selectedPlayer))
     : 5;
   const eligiblePassIds = new Set(
     selectedPlayer && ownTurn && selectedPlayer.side === activeSide
@@ -3389,12 +3652,12 @@ function App() {
   const pitchCameraX = selectedPlayer ? cap((selectedPlayer.x / 21) * 100 - 35.714, 0, 28.572) : 0;
   const pitchCameraY = selectedPlayer ? cap((selectedPlayer.y / 10) * 100 - 35.714, 0, 28.572) : 14.286;
   const canAct = match.actionsUsed < 1 + match.bonusActions;
-  const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= shotRange(selectedPlayer.player);
+  const canShoot = !!selectedPlayer && canAct && selectedPlayer.side === activeSide && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y && ownGoalDistance(selectedPlayer, match.half) <= shotReachFor(selectedPlayer);
   const canShowGoalkeeperClear = selectedPlayer?.side === activeSide
     && selectedPlayer.player.position === "GK" && isInOwnPenaltyBox(selectedPlayer, match.half);
   const clearTarget = canShowGoalkeeperClear ? goalkeeperClearTarget(selectedPlayer, match.tokens, match.half) : null;
   const clearDistance = clearTarget && selectedPlayer ? distance(selectedPlayer, clearTarget) : 0;
-  const clearAccuracy = selectedPlayer ? goalkeeperClearAccuracy(selectedPlayer.player, clearDistance) : 0;
+  const clearAccuracy = selectedPlayer ? clearAccuracyFor(selectedPlayer, clearDistance) : 0;
   const canClear = canShowGoalkeeperClear && canAct
     && selectedPlayer.x === match.ball.x && selectedPlayer.y === match.ball.y;
   const nutmegDefender = selectedPlayer && canAct
@@ -3427,7 +3690,7 @@ function App() {
     ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, clearAccuracy)
     : 0;
   const displayedNutmegChance = selectedPlayer
-    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, nutmegChance(selectedPlayer.player))
+    ? luckAdjustedChance(match, selectedPlayer.side, selectedOpponentSide, nutmegChanceFor(selectedPlayer))
     : 0;
   const displayedStealChance = tutorialStep === 4
     ? 100
@@ -3551,13 +3814,18 @@ function App() {
         .sidebar{display:flex;flex-direction:column;gap:12px}.side-panel{background:#101c18;border:1px solid #ffffff12;border-radius:13px;padding:17px}.side-panel h3{font-size:12px;margin:0 0 12px}.selected-card{display:flex;gap:11px;align-items:center}.selected-card .player-avatar{width:40px;height:40px}.selected-card b{font-size:11px}.selected-card small{display:block;color:#92a79e;font-size:9px;margin-top:3px}.ability{font-size:10px;color:#8ff2c8;margin-top:12px;line-height:1.5}.action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.action{padding:10px 7px;background:#ffffff08;border:1px solid #ffffff10;border-radius:8px;font-size:10px;font-weight:700}.action:hover:not(:disabled){border-color:#8ff2c877;color:#8ff2c8}.action:disabled{opacity:.35;cursor:not-allowed}.chance{display:block;font:9px 'DM Mono',monospace;color:#94a9a1;margin-top:4px}.luck-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:10px}.luck-row b{font-size:10px;letter-spacing:.06em}.luck-row small{display:block;color:#92a79e;font-size:9px;margin-top:3px;font-weight:400;letter-spacing:0}.luck-row strong{font:700 16px 'DM Mono',monospace;color:#8ff2c8}.luck-row strong.luck-hot{color:#f2d79a}.luck-row strong.luck-cold{color:#7fe7d2}.luck-bar{height:4px;background:#ffffff12;border-radius:99px;overflow:hidden;margin-top:6px}.luck-bar span{display:block;height:100%;background:#8ff2c8;border-radius:99px;transition:width .3s ease}.luck-note{color:#93a9a0;font-size:10px;line-height:1.7;margin-top:12px}
         .locker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px;margin-top:22px}.roster-card{background:#101c18;border:1px solid #ffffff12;border-radius:12px;padding:15px}.roster-top{display:flex;align-items:center;gap:10px}.roster-card h3{font-size:12px;margin:0}.roster-card p{color:#93a9a0;font-size:10px;line-height:1.5;min-height:31px}.roster-meta{display:flex;justify-content:space-between;align-items:center;font:9px 'DM Mono',monospace;color:#8ff2c8}.roster-meta select{background:#152b24;color:#e2efe9;border:1px solid #ffffff20;border-radius:6px;padding:5px;font:9px 'DM Mono',monospace}.format-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-top:16px}.format-card{background:#101c18;border:1px solid #ffffff12;border-radius:12px;padding:15px}.format-card h3{font-size:12px;margin:0 0 7px}.format-card p{color:#93a9a0;font-size:10px;min-height:28px}.format-card button{width:100%;margin-top:10px}
         .quickplay-page{padding-top:48px}.quickplay-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:25px}.quickplay-option{background:#101c18;border:1px solid #ffffff16;border-radius:14px;padding:21px;min-height:192px;display:flex;flex-direction:column;align-items:flex-start;text-align:left}.quickplay-option:hover:not(:disabled){border-color:#8ff2c877;transform:translateY(-2px)}.quickplay-option strong{font-size:15px;margin:13px 0 7px}.quickplay-option p{font-size:11px;color:#93a9a0;line-height:1.65;margin:0 0 18px}.quickplay-option .badge{margin-top:auto}.quickplay-option.disabled{opacity:.62;cursor:not-allowed}.quickplay-icon{font-size:23px}
+        .rush-teaser{position:relative;display:flex;align-items:center;gap:22px;width:100%;margin-top:24px;padding:22px 24px;text-align:left;border-radius:16px;border:1px solid #f2c14e55;background:linear-gradient(115deg,#2b2413,#182821 58%,#101c18);overflow:hidden;transition:border-color .18s ease,transform .18s ease}.rush-teaser:hover{border-color:#f2c14ecc;transform:translateY(-2px)}.rush-teaser.active{border-color:#8ff2c899;box-shadow:0 0 0 1px #8ff2c833}.rush-teaser:before{content:"";position:absolute;right:-60px;top:-140px;width:360px;height:360px;background:radial-gradient(circle,#f2c14e22,transparent 65%);pointer-events:none}.rush-teaser-badge{flex:none;align-self:flex-start;background:#f2c14e1f;color:#f2c14e;border:1px solid #f2c14e55;border-radius:99px;padding:6px 10px;font:10px 'DM Mono',monospace;letter-spacing:.14em}.rush-teaser-copy{flex:1;min-width:0}.rush-teaser-copy h2{font-size:23px;margin:0 0 6px;letter-spacing:-.03em}.rush-teaser-copy p{margin:0;color:#a8bdb4;font-size:11px;line-height:1.65;max-width:720px}.rush-teaser-stats{display:flex;gap:20px;margin-top:13px;flex-wrap:wrap}.rush-teaser-stats span{display:flex;flex-direction:column}.rush-teaser-stats strong{font:700 14px 'DM Mono',monospace;color:#f2e4b8}.rush-teaser-stats small{font:8px 'DM Mono',monospace;color:#8da59b;text-transform:uppercase;letter-spacing:.08em;margin-top:2px}.rush-teaser-cta{flex:none;background:#8ff2c8;color:#0a241c;border-radius:9px;padding:12px 16px;font-size:11px;font-weight:800;white-space:nowrap}
+        .rush-page{padding-top:48px}.rush-head{display:flex;justify-content:space-between;align-items:end;gap:20px}.rush-level-pill{flex:none;font:700 12px 'DM Mono',monospace;padding:9px 13px;border:1px solid #f2c14e66;color:#f2c14e;border-radius:99px;background:#f2c14e10}.rush-run-hud{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin:22px 0}.rush-run-hud span{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:12px}.rush-run-hud strong{display:block;font:700 16px 'DM Mono',monospace;color:#b9ffe4}.rush-run-hud small{display:block;margin-top:3px;font:8px 'DM Mono',monospace;color:#8da59b;text-transform:uppercase;letter-spacing:.07em}.rush-legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 4px;font:9px 'DM Mono',monospace;letter-spacing:.1em;text-transform:uppercase}.rush-legend span{display:inline-flex;align-items:center;gap:6px}.rush-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}.rush-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin-top:20px}.rush-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:9px;text-align:left;background:linear-gradient(160deg,color-mix(in srgb,var(--rarity) 13%,#101c18),#101c18);border:1px solid var(--rarity);border-radius:14px;padding:19px 18px 18px;min-height:210px;box-shadow:0 10px 30px #0004;transition:transform .18s ease,box-shadow .18s ease}.rush-card:hover:not(:disabled){transform:translateY(-3px);box-shadow:0 14px 36px #0006,0 0 24px color-mix(in srgb,var(--rarity) 34%,transparent)}.rush-card:disabled{opacity:.5;cursor:not-allowed}.rush-rarity{font:10px 'DM Mono',monospace;letter-spacing:.16em;color:var(--rarity);text-transform:uppercase}.rush-card strong{font-size:16px;letter-spacing:-.02em}.rush-card p{margin:0;color:#a4b8af;font-size:11px;line-height:1.6}.rush-effects{display:flex;flex-direction:column;gap:4px;margin-top:auto;padding-top:12px;width:100%}.rush-effects span{font:9px 'DM Mono',monospace;color:var(--rarity);background:color-mix(in srgb,var(--rarity) 12%,transparent);border-radius:6px;padding:4px 7px}.rush-effects span.negative{color:#ff9e8f;background:#ff6b5a1a}.rush-card-tag{position:absolute;top:-9px;right:14px;background:#0b1512;border:1px solid var(--rarity);color:var(--rarity);border-radius:99px;padding:3px 8px;font:8px 'DM Mono',monospace;letter-spacing:.1em}
+        .rush-owned{margin-top:24px;background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:20px}.rush-chip-row{display:flex;flex-wrap:wrap;gap:9px}.rush-ability-chip{display:flex;flex-direction:column;gap:3px;border:1px solid var(--rarity);border-radius:10px;padding:9px 12px;background:color-mix(in srgb,var(--rarity) 8%,transparent)}.rush-ability-chip b{font-size:11px;color:var(--rarity)}.rush-ability-chip small{font:9px 'DM Mono',monospace;color:#9fb5ab}.rush-results{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin:22px 0}.rush-results span{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:12px}.rush-results strong{display:block;font:700 16px 'DM Mono',monospace;color:#b9ffe4}.rush-results small{display:block;margin-top:3px;font:8px 'DM Mono',monospace;color:#8da59b;text-transform:uppercase;letter-spacing:.07em}.rush-history{display:flex;flex-direction:column;gap:7px}.rush-history>div{display:grid;grid-template-columns:70px 70px 1fr;gap:12px;align-items:center;background:#ffffff05;border:1px solid #ffffff10;border-left:3px solid #5bd68a;border-radius:9px;padding:10px 12px}.rush-history>div.lost{border-left-color:#ec695e}.rush-history b{font:10px 'DM Mono',monospace;color:#8ff2c8}.rush-history span{font:700 13px 'DM Mono',monospace}.rush-history small{color:#93a9a0;font-size:10px}.rush-actions{display:flex;gap:10px;margin-top:24px;flex-wrap:wrap}.rush-abandon{margin-top:22px}.rush-intro .primary{margin-top:18px}
+        .rush-hud{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}.rush-hud span{background:linear-gradient(120deg,#1a2a1c,#132019);border:1px solid #f2c14e3d;border-radius:10px;padding:9px 12px}.rush-hud b{display:block;font:700 12px 'DM Mono',monospace;color:#f2e4b8}.rush-hud small{display:block;margin-top:2px;font:8px 'DM Mono',monospace;color:#96aca2;text-transform:uppercase;letter-spacing:.07em}.rush-hud span.danger{border-color:#ec695e88;background:#2a1614}.rush-hud span.danger b{color:#ff9e8f}
+        .rush-abilities-panel .rush-ability-row{display:flex;flex-direction:column;gap:3px;border-left:2px solid var(--rarity);padding:2px 0 2px 9px;margin-bottom:12px}.rush-ability-label{font:9px 'DM Mono',monospace;color:#93a9a0;text-transform:uppercase;letter-spacing:.07em}.rush-ability-row strong{font-size:12px}.rush-ability-row small{font-size:9px;color:#9fb5ab;line-height:1.5}.rush-buff-list{border-top:1px solid #ffffff12;padding-top:10px}.rush-buff-line{display:flex;flex-direction:column;margin-top:7px}.rush-buff-line b{font-size:10px;color:#d9ece4}.rush-buff-line small{font-size:9px;color:#8da59b;line-height:1.45}
         .ai-difficulty{margin-top:22px}.ai-difficulty input{width:100%;accent-color:#8ff2c8;margin:17px 0 8px}.ai-difficulty-scale{display:flex;justify-content:space-between;gap:12px;color:#93a9a0;font:9px 'DM Mono',monospace}.ai-difficulty-note{color:#93a9a0;font-size:10px;line-height:1.6;margin:11px 0 0}.ai-evolution-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0 0}.ai-evolution-stats span{background:#ffffff05;border:1px solid #ffffff10;border-radius:9px;padding:9px 10px}.ai-evolution-stats strong{display:block;font:700 13px 'DM Mono',monospace;color:#b9ffe4}.ai-evolution-stats small{display:block;margin-top:3px;color:#92a79e;font:8px 'DM Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:520px){.ai-evolution-stats{grid-template-columns:1fr 1fr}}
         .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#8ff2c8;font-size:10px}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#183a2f,#12241d);border:1px solid #8ff2c820;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9db3aa}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#94a9a1;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#163026,#101c18);border:1px solid #8ff2c866;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#b9ffe4;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aebfb6;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #8ff2c844;border-radius:9px;color:#b9ffe4;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#101c18;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#8ff2c855}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#94a9a1;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
         .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#93a9a0;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#8ff2c818;border-color:#8ff2c875;color:#8ff2c8}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0b1512}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}.match-fullscreen .pitch{width:100%;transform:none!important}
         .toast{position:fixed;right:24px;bottom:23px;background:#c9ffe9;color:#0a241c;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:700;box-shadow:0 10px 40px #0008;z-index:9}
-        @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
+        @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.rush-teaser{flex-direction:column;align-items:flex-start}.rush-run-hud{grid-template-columns:1fr 1fr}.rush-grid{grid-template-columns:1fr}.rush-results{grid-template-columns:1fr 1fr}.rush-hud{grid-template-columns:1fr 1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
         @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.online-room-actions{grid-template-columns:1fr}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
       `}</style>
       <style>{`
@@ -3952,6 +4220,30 @@ function App() {
         <div className="eyebrow" style={{ marginTop: 25 }}>Choose your match rules</div>
         <h1>Quickplay</h1>
         <p className="subtitle">Choose an unlocked mode. Campaign matches also rotate between Classic, Street 3v3, and Golden Goal.</p>
+        <button className={`rush-teaser ${rush && rush.status !== "over" ? "active" : ""}`}
+          onClick={() => (rush && rush.status !== "over" ? setScreen("rush") : openLeagueRush())}>
+          <span className="rush-teaser-badge">LIMITED EVENT</span>
+          <div className="rush-teaser-copy">
+            <h2>League Rush</h2>
+            <p>Draft a permanent buff after every win, take one new ability into each match, and beat the CPU from level 75 upward. Three goals wins a game — five conceded goals ends the run for good.</p>
+            <div className="rush-teaser-stats">
+              {rush && rush.status !== "over"
+                ? <>
+                  <span><strong>GAME {rush.game}</strong><small>next up</small></span>
+                  <span><strong>LVL {rush.difficulty}</strong><small>opposition</small></span>
+                  <span><strong>{rush.conceded}/{LEAGUE_RUSH_CONCEDE_LIMIT}</strong><small>conceded</small></span>
+                  <span><strong>{rush.buffs.length}</strong><small>run buffs</small></span>
+                </>
+                : <>
+                  <span><strong>LVL 75</strong><small>starting CPU</small></span>
+                  <span><strong>{LEAGUE_RUSH_GOAL_TARGET}</strong><small>goals to win</small></span>
+                  <span><strong>{LEAGUE_RUSH_CONCEDE_LIMIT}</strong><small>goal budget</small></span>
+                  <span><strong>{rushAbilities.length}</strong><small>abilities</small></span>
+                </>}
+            </div>
+          </div>
+          <span className="rush-teaser-cta">{rush && rush.status !== "over" ? "CONTINUE RUN →" : "START RUN →"}</span>
+        </button>
         <div className="format-grid">{formats.map((format) => <article className="format-card" key={format.id}>
           <h3>{format.name}</h3><p>{format.detail} · Full 90-minute match with halftime.</p>
           <button className={formatUnlocked(format) ? activeFormat === format.id ? "primary" : "secondary" : "secondary"}
@@ -4017,6 +4309,95 @@ function App() {
         </section>}
       </div>}
 
+      {screen === "rush" && <div className="content rush-page">
+        <button className="ghost-btn" onClick={exitLeagueRush}>← QUICKPLAY</button>
+        {!rush && <section className="rush-intro">
+          <div className="eyebrow" style={{ marginTop: 25 }}>Limited event</div>
+          <h1>League Rush</h1>
+          <p className="subtitle">The run has ended. Start a new one to draft a fresh set of buffs.</p>
+          <button className="primary" onClick={openLeagueRush}>START A NEW RUN</button>
+        </section>}
+        {rush && rush.status !== "over" && <>
+          <div className="rush-head">
+            <div>
+              <div className="eyebrow" style={{ marginTop: 25 }}>
+                {rush.status === "draft" ? "Run buff · choose one" : "Game ability · choose one"}
+              </div>
+              <h1>{rush.status === "draft" ? "Draft a buff" : "Take an ability"}</h1>
+              <p className="subtitle">
+                {rush.status === "draft"
+                  ? "This buff is permanent for the rest of the run. It stacks with every ability you pick up in later games, up to a hard cap on each stat."
+                  : `This ability applies to game ${rush.game} only. Your opponent draws one at level ${rush.difficulty} too.`}
+              </p>
+            </div>
+            <span className="rush-level-pill">LVL {rush.difficulty}</span>
+          </div>
+          <div className="rush-run-hud">
+            <span><strong>GAME {rush.game}</strong><small>opposition level {rush.difficulty}</small></span>
+            <span><strong>{rush.conceded}/{LEAGUE_RUSH_CONCEDE_LIMIT}</strong><small>goals conceded</small></span>
+            <span><strong>{Math.max(0, LEAGUE_RUSH_CONCEDE_LIMIT - rush.conceded)}</strong><small>goals left in budget</small></span>
+            <span><strong>{LEAGUE_RUSH_GOAL_TARGET}</strong><small>goals to win</small></span>
+            <span><strong>{rush.wins}</strong><small>games won</small></span>
+          </div>
+          <div className="rush-legend" aria-label="Ability rarity colours">
+            {rushRarityOrder.map((rarity) => <span key={rarity} style={{ color: rushRarityMeta[rarity].color }}>
+              <i style={{ background: rushRarityMeta[rarity].color }} aria-hidden="true" />{rushRarityMeta[rarity].label}
+            </span>)}
+          </div>
+          <div className="rush-grid">
+            {(rush.status === "draft" ? rush.buffChoices : rush.abilityChoices).map((id) => {
+              const ability = rushAbilityById(id);
+              if (!ability) return null;
+              return <RushAbilityCard key={id} ability={ability}
+                tag={rush.status === "draft" ? "PERMANENT RUN BUFF" : `GAME ${rush.game} ABILITY`}
+                onSelect={() => (rush.status === "draft" ? chooseRushBuff(id) : chooseRushAbility(id))} />;
+            })}
+          </div>
+          {rush.buffs.length > 0 && <section className="rush-owned">
+            <div className="panel-heading"><h2>Your run buffs</h2><span>Stays active every game</span></div>
+            <div className="rush-chip-row">{rush.buffs.map((id) => {
+              const ability = rushAbilityById(id);
+              if (!ability) return null;
+              const meta = rushRarityMeta[ability.rarity];
+              return <span className="rush-ability-chip" key={id} style={{ "--rarity": meta.color } as CSSProperties}>
+                <b>{ability.name}</b>
+                <small>{meta.label} · {rushEffectSummary(ability)}</small>
+              </span>;
+            })}</div>
+          </section>}
+          {rush.status === "prep" && <button className="secondary rush-abandon" onClick={exitLeagueRush}>ABANDON RUN</button>}
+        </>}
+        {rush && rush.status === "over" && <>
+          <div className="eyebrow" style={{ marginTop: 25 }}>Run complete</div>
+          <h1>League Rush over</h1>
+          <p className="subtitle">
+            {rush.result === "conceded"
+              ? `You used all ${LEAGUE_RUSH_CONCEDE_LIMIT} goals of the concession budget on game ${rush.game}.`
+              : `Full time on game ${rush.game} without the ${LEAGUE_RUSH_GOAL_TARGET} goals needed to advance.`}
+          </p>
+          <div className="rush-results">
+            <span><strong>{rush.wins}</strong><small>games won</small></span>
+            <span><strong>{rush.game}</strong><small>games reached</small></span>
+            <span><strong>{rush.totalScored}</strong><small>goals scored</small></span>
+            <span><strong>{rush.conceded}/{LEAGUE_RUSH_CONCEDE_LIMIT}</strong><small>goals conceded</small></span>
+            <span><strong>+{rush.xpEarned}</strong><small>XP earned</small></span>
+            <span><strong>+{rush.coinsEarned}</strong><small>coins earned</small></span>
+          </div>
+          {rush.history.length > 0 && <section className="rush-owned">
+            <div className="panel-heading"><h2>Run history</h2><span>{rush.history.length} game{rush.history.length === 1 ? "" : "s"}</span></div>
+            <div className="rush-history">{rush.history.map((entry) => <div key={`${entry.game}-${entry.enemyAbility}`} className={entry.won ? "won" : "lost"}>
+              <b>GAME {entry.game}</b>
+              <span>{entry.scored}–{entry.conceded}</span>
+              <small>vs {rushAbilityById(entry.enemyAbility)?.name ?? "unknown ability"} · {entry.won ? "won" : "lost"}</small>
+            </div>)}</div>
+          </section>}
+          <div className="rush-actions">
+            <button className="primary" onClick={openLeagueRush}>NEW RUN</button>
+            <button className="secondary" onClick={() => { stopQuickplay(); setScreen("quickplay"); }}>BACK TO QUICKPLAY</button>
+          </div>
+        </>}
+      </div>}
+
       {screen === "victory" && <section className="victory-page">
         <div className="victory-icon" aria-hidden="true">{match.score[0] === match.score[1] ? "🤝" : match.score[0] > match.score[1] ? "🏆" : "⚽"}</div>
         <div className="eyebrow">{match.minute >= 90 ? "FULL TIME" : "MATCH COMPLETE"}</div>
@@ -4065,7 +4446,13 @@ function App() {
 
       {screen === "match" && <div className="content match-layout">
         <section>
-          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "tutorial" ? `INTERACTIVE TUTORIAL · STEP ${tutorialStep} OF ${tutorialStepCount}` : quickplayMode === "online" ? `${onlineSide === "home" ? "HOME" : "AWAY"} · ONLINE 1V1${ownTurn ? " · YOUR TURN" : " · OPPONENT'S TURN"}` : quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {quickplayMode === "tutorial" ? "DRILL" : match.formationId}</small><span className="match-clock">{quickplayMode === "tutorial" ? "PRACTICE PITCH" : `${clockLabel} · HALF ${match.half}`}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          <div className="match-top"><button className="ghost-btn" onClick={() => { stopQuickplay(); setMatchFullscreen(false); setScreen("home"); }}>← DASHBOARD</button><div className="scorebox"><strong>{scoreLabel}</strong><small>{quickplayMode === "tutorial" ? `INTERACTIVE TUTORIAL · STEP ${tutorialStep} OF ${tutorialStepCount}` : quickplayMode === "online" ? `${onlineSide === "home" ? "HOME" : "AWAY"} · ONLINE 1V1${ownTurn ? " · YOUR TURN" : " · OPPONENT'S TURN"}` : quickplayMode === "local" ? `${match.turn === "home" ? "HOME" : "AWAY"} TURN · LOCAL QUICKPLAY` : quickplayMode === "rush" ? `LEAGUE RUSH · GAME ${match.rushGame ?? 1} · ${ownTurn ? "YOUR TURN" : "CPU TURN"}` : quickplayMode === "cpu" ? "CPU QUICKPLAY · YOUR TURN" : `YOU · MATCH ${match.campaignStage}`} · {fmt(match.format).name.toUpperCase()} · {quickplayMode === "tutorial" ? "DRILL" : match.formationId}</small><span className="match-clock">{quickplayMode === "tutorial" ? "PRACTICE PITCH" : `${clockLabel} · HALF ${match.half}`}</span></div><button className="ghost-btn" onClick={() => setMatchFullscreen((fullscreen) => !fullscreen)} aria-label={matchFullscreen ? "Exit in-page fullscreen" : "Expand game to fill page"}>{matchFullscreen ? "⛶ EXIT FULLSCREEN" : "⛶ FULLSCREEN GAME"}</button></div>
+          {isRushMatch(match) && <div className="rush-hud">
+            <span><b>LEAGUE RUSH · GAME {match.rushGame ?? 1}</b><small>opposition level {match.rushLevel ?? 75}</small></span>
+            <span><b>{match.score[0]}/{match.rushGoalTarget ?? LEAGUE_RUSH_GOAL_TARGET}</b><small>goals to win this game</small></span>
+            <span className={(match.rushConceded ?? 0) >= (match.rushConcedeLimit ?? LEAGUE_RUSH_CONCEDE_LIMIT) ? "danger" : ""}><b>{match.rushConceded ?? 0}/{match.rushConcedeLimit ?? LEAGUE_RUSH_CONCEDE_LIMIT}</b><small>run concession budget</small></span>
+            <span><b>{Math.max(0, (match.rushConcedeLimit ?? LEAGUE_RUSH_CONCEDE_LIMIT) - (match.rushConceded ?? 0))}</b><small>concessions left</small></span>
+          </div>}
           {quickplayMode === "online" && !onlineReady && <div className="store-notice" role="status">{onlineStatus || "Waiting for the other player to join."} {onlineRoomCode && <>Room code: <strong>{onlineRoomCode}</strong></>}</div>}
           {quickplayMode === "online" && onlineStatus && onlineReady && onlineStatus.includes("disconnected") && <div className="kit-warning" role="alert">{onlineStatus}</div>}
           {match.halftime && <div className="halftime-panel"><div><strong>Halftime · {scoreLabel}</strong><small>Teams have switched ends. Each in-game minute lasts 3.5 seconds.</small></div><button className="primary" onClick={resumeSecondHalf}>START SECOND HALF</button></div>}
@@ -4132,13 +4519,37 @@ function App() {
         <aside className="sidebar">
           <section className="side-panel"><h3>On the ball</h3>{selectedPlayer ? <><div className="selected-card"><div className="player-avatar" style={{ background: selectedPlayer.player.color }}>{selectedPlayer.player.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</div><div><b>{selectedPlayer.player.name}</b><small>{selectedPlayer.player.club} · {selectedPlayer.player.position}</small></div></div><div className="ability">{abilityDescription(selectedPlayer.player)}</div></> : <small style={{ color: "#92a79e" }}>Select a player on the pitch</small>}</section>
           <section className="side-panel"><h3>Actions</h3><div className="action-grid">
-            <button className={`action ${tutorialStep === 3 || tutorialStep === 5 ? "recommended" : ""}`} disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${Math.round(displayedShotChance)}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotRange(selectedPlayer.player)}` : "get in range"}</span></button>
+            <button className={`action ${tutorialStep === 3 || tutorialStep === 5 ? "recommended" : ""}`} disabled={!canShoot || !ownTurn} onClick={shoot}>⚽ SHOOT<span className="chance">{selectedPlayer && canShoot ? `${Math.round(displayedShotChance)}% · ${shotAngleDegrees(selectedPlayer, match.half)}° angle · range ${shotReachFor(selectedPlayer)}` : "get in range"}</span></button>
             {canShowGoalkeeperClear && <button className="action" disabled={!canClear || !ownTurn} onClick={clearBall}>🥅 CLEAR<span className="chance">{canClear ? `${Math.round(displayedClearChance)}% accuracy · ${clearDistance} tiles upfield · Clearing ${goalkeeperClearing(selectedPlayer.player)}` : `keeper must have the ball · range ${clearDistance} · Clearing ${goalkeeperClearing(selectedPlayer.player)}`}</span></button>}
             <button className={`action ${tutorialStep === 2 ? "recommended" : ""}`} disabled={!selectedPlayer || !ownTurn || (!canAct && !passMode) || selectedPlayer.side !== activeSide || match.ball.x !== selectedPlayer.x || match.ball.y !== selectedPlayer.y} onClick={pass}>{passMode ? "× CANCEL PASS" : "↗ PASS"}<span className="chance">{passMode ? "tap a glowing teammate" : `teammate ≤ ${passReach} tiles`}</span></button>
             <button className="action" disabled={!canNutmeg || !ownTurn} onClick={nutmeg}>〰 NUTMEG<span className="chance">{selectedPlayer ? `${Math.round(displayedNutmegChance)}% · fail: ${quickplayMode === "local" || quickplayMode === "online" ? "2 player turns" : "2 AI turns"}` : "adjacent defender"}</span></button>
             <button className={`action ${tutorialStep === 4 ? "recommended" : ""}`} disabled={!canSteal || !ownTurn} onClick={steal}>🛡 STEAL<span className="chance">{canSteal ? `${Math.round(displayedStealChance)}% · adjacent carrier` : "defend near the ball"}</span></button>
             <button className="action" disabled={!ownTurn} onClick={() => endTurn({ ...match, message: quickplayMode === "online" ? "Turn passed to your online opponent." : quickplaySide !== null ? "Turn passed. Hand the device to the other player." : "You hold position. Opposition's turn." })}>⏭ END TURN<span className="chance">{quickplayMode === "online" ? "send turn online" : quickplaySide !== null ? "pass the device" : "let AI play"}</span></button>
           </div></section>
+          {isRushMatch(match) && <section className="side-panel rush-abilities-panel">
+            <h3>League Rush abilities</h3>
+            {[
+              { key: "home", label: "Your ability", id: match.rushHomeAbility },
+              { key: "away", label: `CPU · level ${match.rushLevel ?? 75}`, id: match.rushAwayAbility },
+            ].map((entry) => {
+              const ability = rushAbilityById(entry.id);
+              if (!ability) return null;
+              const meta = rushRarityMeta[ability.rarity];
+              return <div className="rush-ability-row" key={entry.key} style={{ "--rarity": meta.color } as CSSProperties}>
+                <span className="rush-ability-label">{entry.label} · <b style={{ color: meta.color }}>{meta.label}</b></span>
+                <strong>{ability.name}</strong>
+                <small>{rushEffectSummary(ability)}</small>
+              </div>;
+            })}
+            {rush && rush.buffs.length > 0 && <div className="rush-buff-list">
+              <span className="small-note">RUN BUFFS · {rush.buffs.length}</span>
+              {rush.buffs.map((id) => {
+                const ability = rushAbilityById(id);
+                if (!ability) return null;
+                return <div className="rush-buff-line" key={id}><b>{ability.name}</b><small>{rushEffectSummary(ability)}</small></div>;
+              })}
+            </div>}
+          </section>}
           <section className="side-panel"><h3>Luck balance</h3>
             <div className="luck-row"><div><b>{homeLuckLabel}</b><small>{match.luck.home.successes}/{match.luck.home.attempts} random checks won</small></div><strong className={homeLuck > 55 ? "luck-hot" : homeLuck < 45 ? "luck-cold" : ""}>{homeLuck}%</strong></div>
             <div className="luck-bar"><span style={{ width: `${homeLuck}%` }} /></div>
@@ -4147,8 +4558,10 @@ function App() {
             <div className="luck-note">Counted fresh each game across {luckChecks} random check{luckChecks === 1 ? "" : "s"}. Every roll softly pulls both sides toward a 50% average — the further a side strays, the stronger the correction, but no result is ever guaranteed.</div>
           </section>
           {devToolsEnabled && <section className="side-panel"><h3>Developer controls</h3>
-            <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>
-            <div className="small-note" style={{ marginTop: 9 }}>Awards the current match and progression rewards for UI testing.</div>
+            <button className="primary" style={{ width: "100%" }} onClick={() => setMatch(finishOrSet({ ...match, score: [match.rushGoalTarget ?? goalTarget, 0] }, true))}>⚡ FORCE MATCH WIN</button>
+            {isRushMatch(match) && <button className="secondary" style={{ width: "100%", marginTop: 8 }}
+              onClick={() => setMatch(finishOrSet({ ...match, score: [match.score[0], match.score[1] + 1], rushConceded: (match.rushConceded ?? 0) + 1 }))}>🥅 FORCE CONCEDE</button>}
+            <div className="small-note" style={{ marginTop: 9 }}>Awards the current match and progression rewards for UI testing.{isRushMatch(match) ? " Force concede adds one goal to the run's five-goal budget." : ""}</div>
           </section>}
           <section className="side-panel"><h3>{match.finished ? "Full time" : quickplaySide !== null ? `${match.turn === "home" ? "Home" : "Away"} player · ${ownTurn ? "your turn" : "opponent's turn"}` : ownTurn ? "Your turn" : "Opponent's turn"}</h3><div style={{ color: "#93a9a0", fontSize: 10, lineHeight: 1.8 }}>{quickplaySide !== null ? "Pass-and-play on one device: pass the screen after each turn. Each player controls the team whose turn it is." : "Select one of your players, then click an open tile to move."} Each turn allows one drive and one action. A successful nutmeg grants one extra drive and action; a failed attempt gives the opponent two turns. The ball carrier can pass, shoot, or risk a nutmeg against an adjacent defender. Shot angle affects accuracy. Matches last 90 in-game minutes, with halftime at 45; each game minute takes 3.5 seconds. Existing goal-target rules can end a match earlier.</div><div className="small-note" style={{ marginTop: 10 }}>DRIVE {Math.min(match.drivesUsed, 1 + match.bonusDrives)}/{1 + match.bonusDrives} · ACTION {Math.min(match.actionsUsed, 1 + match.bonusActions)}/{1 + match.bonusActions}</div></section>
         </aside>

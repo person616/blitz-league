@@ -16,6 +16,16 @@ The Locker Room player roster can be sorted by name, position, club, OVR, base r
 
 The current save version performs a one-time season reset for returning browsers: older saves start with the regular starting XI, base progression, and default club kits; subsequent progress is saved normally. Since saves are stored locally in each browser, the reset takes effect the next time a returning player visits the site.
 
+League Rush is a roguelike boss-rush event. After each win, draft one of three permanent run buffs; before each match, pick one of three single-game abilities. The CPU starts at Level 75 and rises five levels per game, matches are first to three goals, and five goals conceded in total ends the run. Both teams gain an ability each game, rarity colours (common, uncommon, rare, epic, legendary) are shown on every selection screen, and all 67 abilities are covered by the balance suite (`npm run test:rush`).
+
+## Save protection and anti-cheat
+
+Blitz League stores progress in each browser, so the save is protected rather than trusted. Each install derives an HMAC-SHA-256 key from a bundled integrity secret and its install id; the save payload is signed, mirrored to a second key, and paired with a guard counter stored in both local and session storage. The wallet is an append-only hash-chained ledger: every coin or XP change is a typed transaction with a published per-grant ceiling, and duplicate or replayed transactions are rejected. Validation also enforces hard balance ceilings, requires earned and spent totals to reconcile with the ledger, and blocks transactions that spend more than the available balance.
+
+A save with an invalid signature, mismatched balance mirrors, a broken ledger, or a restored older counter is rejected and replaced with a fresh verified save, so storage editing and rollback restore starting progress instead of granting currency. Older unsigned saves get one conservative migration: the save is re-signed, clamped against a coin ceiling derived from lifetime XP, and written through the protected path. Settings shows whether the current save is verified, migrated, or reset, and includes a **Verify save** button that re-checks the signature, wallet, ledger, and guard.
+
+Client-side protection stops casual storage editing and save rollbacks. Because the game is open source and the integrity key ships in the client, a determined player can still modify the game code or rebuild it; only server-authoritative accounts can stop that. This limit is stated in Settings and is why online rooms remain casual invitations with no ranked anti-cheat.
+
 ## Online 1v1
 
 The GitHub Pages site connects to a WebSocket room relay deployed on Render. Deploy the included `render.yaml` blueprint from this repository at [Render](https://render.com/deploy?repo=https://github.com/person616/blitz-league); it creates the `person616-blitz-league-match-relay` service. Once deployed, choose Quickplay → Online · 11v11, select Create Game, and share the seven-digit code. The other player enters that code and selects Join Game; they do not need a server address.
@@ -34,7 +44,7 @@ The model artifacts contain only learned weights, evolved genomes, and aggregate
 
 Street 3v3 places the goalkeeper, midfielder, and forward in separate mirrored positions, with the midfielder taking kickoff. Fullscreen shows the complete pitch and scales player tokens and the ball relative to the pitch size.
 
-For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode is gated by Vite's development flag, skips saved progress, and is unavailable in production builds and on the public website.
+For local development only, run `npm run dev` and open `http://localhost:5173/blitz-league/?blitz-dev=tools` to enable developer controls (all unlocks, unlimited/free store purchases, and a force-win button). Developer mode requires Vite's development flag **and** a `localhost`, `127.0.0.1`, or `[::1]` hostname, skips saved progress, and is unavailable in production builds and on the public website. The local test suites are `npm run test:rush` and `npm run test:anticheat`.
 
 ## Run locally
 

@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "blitz league.tsx", "league-rush.ts", "vite.config.ts"]
+  "include": ["src", "blitz league.tsx", "league-rush.ts", "anti-cheat.ts", "vite.config.ts"]
 }

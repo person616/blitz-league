@@ -19,6 +19,29 @@ import {
   emptyRushMods,
   type RushAbility,
 } from "./league-rush";
+import {
+  INTEGRITY_KEY,
+  SAVE_STORAGE_KEYS,
+  SECURITY_VERSION,
+  STARTING_COINS,
+  applyTransactions,
+  checkGuard,
+  createInstallId,
+  createWallet,
+  decodeGuard,
+  decodeSave,
+  deriveSaveKey,
+  describeSaveFailure,
+  encodeGuard,
+  encodeSave,
+  sha256Hex,
+  validateWallet,
+  walletFromLegacy,
+  type NewTransaction,
+  type SaveGuard,
+  type SavePayload,
+  type Wallet,
+} from "./anti-cheat";
 
 type Position = "FWD" | "MID" | "DEF" | "GK";
 type AbilityType = "finishing" | "dribbling" | "pace" | "defending" | "playmaking" | "goalkeeping";
@@ -27,6 +50,34 @@ type FormationId = "4-3-3" | "4-4-2" | "3-5-2" | "4-2-3-1";
 type CaptionSize = "small" | "medium" | "large";
 type KitColor = { id: string; name: string; value: string };
 type CrateReveal = { crate: "basic" | "blitz" | "thanksgiving"; color: KitColor; reward: string; bonusCoins: number };
+type SaveSecurityStatus = "checking" | "verified" | "migrated" | "reset" | "dev";
+type SaveData = {
+  securityVersion?: number;
+  progressionVersion?: number;
+  saveCounter?: number;
+  savedAt?: number;
+  installId?: string;
+  wallet?: Wallet;
+  xp?: number;
+  coins?: number;
+  unlockedPlayers?: string[];
+  unlockedFormats?: FormatId[];
+  unlockedFormations?: FormationId[];
+  activeFormationId?: FormationId;
+  formationAssignments?: Partial<Record<FormationId, Record<string, string>>>;
+  unlockedTeamColors?: string[];
+  homeKitColorId?: string;
+  awayKitColorId?: string;
+  dailyOfferPurchases?: Record<string, boolean>;
+  activeFormat?: FormatId;
+  level?: number;
+  aiDifficulty?: number;
+  captionsEnabled?: boolean;
+  captionSize?: CaptionSize;
+  endTurnKey?: string | null;
+  enterEndsTurn?: boolean;
+  tutorialCompleted?: boolean;
+};
 type PlayerSort = "default" | "name-asc" | "name-desc" | "position" | "club" | "ovr-desc" | "ovr-asc" | "rating-desc" | "rating-asc" | "ability-desc" | "ability-asc" | "mean-desc" | "unlock-asc" | "unlock-desc" | "unlocked-first" | "locked-first";
 type FormationSlot = { id: string; label: string; position: Position; x: number; y: number };
 type TacticalFormation = { id: FormationId; name: string; description: string; slots: FormationSlot[] };
@@ -86,6 +137,7 @@ export type Match = {
   bonusActions: number;
   luck: MatchLuck;
   finished?: boolean;
+  rewardClaimed?: boolean;
   rushGoalTarget?: number;
   rushConcedeLimit?: number;
   rushConceded?: number;
@@ -1885,9 +1937,15 @@ function makeTutorialMatch(step: number, score: [number, number], players: Playe
 
 function App() {
   const devToolsEnabled = import.meta.env.DEV
+    && !import.meta.env.PROD
+    && ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname)
     && new URLSearchParams(window.location.search).get("blitz-dev") === "tools";
   const [xp, setXp] = useState(() => devToolsEnabled ? xpRequiredForPassLevel(battlePassFinalLevel) : 0);
-  const [coins, setCoins] = useState(120);
+  const [coins, setCoins] = useState(STARTING_COINS);
+  const walletRef = useRef<Wallet>(createWallet());
+  const installIdRef = useRef("");
+  const saveCounterRef = useRef(0);
+  const [saveSecurity, setSaveSecurity] = useState<SaveSecurityStatus>(devToolsEnabled ? "dev" : "checking");
   const [unlockedPlayers, setUnlockedPlayers] = useState<string[]>(() =>
     devToolsEnabled ? roster.map((player) => player.id) : startingPlayers);
   const [unlockedFormats, setUnlockedFormats] = useState<FormatId[]>(() =>
@@ -1953,6 +2011,38 @@ function App() {
   const currentLevelXpStart = xpRequiredForPassLevel(battlePassLevel);
   const nextLevelXpTarget = xpRequiredForPassLevel(battlePassLevel + 1);
   const maxPassXp = xpRequiredForPassLevel(battlePassFinalLevel);
+  const keyForCurrentInstall = () => {
+    if (!installIdRef.current) installIdRef.current = createInstallId();
+    return deriveSaveKey(INTEGRITY_KEY, installIdRef.current);
+  };
+  const walletTransaction = (
+    transactions: NewTransaction[],
+    failureLabel = "Save protection blocked that action",
+  ): boolean => {
+    if (devToolsEnabled) {
+      let nextCoins = coins;
+      let nextXp = xp;
+      for (const transaction of transactions) {
+        const signedAmount = transaction.kind === "earn" ? transaction.amount : -transaction.amount;
+        if (transaction.currency === "coins") nextCoins += signedAmount;
+        else nextXp += signedAmount;
+      }
+      setCoins(nextCoins);
+      setXp(nextXp);
+      return true;
+    }
+    const result = applyTransactions(walletRef.current, transactions, keyForCurrentInstall(), {
+      maxXp: maxPassXp,
+    });
+    if (!result.ok) {
+      setNotice(`${failureLabel}: ${result.issue.detail}`);
+      return false;
+    }
+    walletRef.current = result.wallet;
+    setCoins(result.wallet.coins);
+    setXp(result.wallet.xp);
+    return true;
+  };
   const xpTowardNextLevel = xp - currentLevelXpStart;
   const xpForNextLevel = nextLevelXpTarget - currentLevelXpStart;
   const activeDailyOffers = dailyPlayerOffers(new Date(storeNow));
@@ -2055,30 +2145,40 @@ function App() {
       setNotice("That daily offer has already been purchased today.");
       return;
     }
-    if (!devToolsEnabled && coins < price) {
-      setNotice(`You need ${price - coins} more coins for ${player.name}.`);
+    if (!devToolsEnabled && walletRef.current.coins < price) {
+      setNotice(`You need ${price - walletRef.current.coins} more coins for ${player.name}.`);
       return;
     }
-    if (!devToolsEnabled) setCoins((current) => current - price);
+    if (!walletTransaction([
+      { kind: "spend", currency: "coins", amount: price, reason: "daily-offer-spend" },
+    ], "Transfer blocked")) return;
     setUnlockedPlayers((current) => current.includes(player.id) ? current : [...current, player.id]);
     setDailyOfferPurchases((current) => ({ ...current, [offerKey]: true }));
     setNotice(`${player.name} joined your squad.`);
   };
 
   const buyXp = (coinPrice: number) => {
-    if (!devToolsEnabled && coins < coinPrice) {
-      setNotice(`You need ${coinPrice - coins} more coins.`);
+    const currentXp = devToolsEnabled ? xp : walletRef.current.xp;
+    const availableCoins = devToolsEnabled ? coins : walletRef.current.coins;
+    if (!devToolsEnabled && availableCoins < coinPrice) {
+      setNotice(`You need ${coinPrice - availableCoins} more coins.`);
       return;
     }
-    if (!devToolsEnabled && xp >= maxPassXp) {
+    if (!devToolsEnabled && currentXp >= maxPassXp) {
       setNotice("Your Season Pass is already at its final level.");
       return;
     }
-    const xpGain = devToolsEnabled ? coinPrice * 4 : Math.min(coinPrice * 4, maxPassXp - xp);
+    const xpGain = devToolsEnabled ? coinPrice * 4 : Math.min(coinPrice * 4, maxPassXp - currentXp);
+    if (xpGain <= 0) {
+      setNotice("Your Season Pass is already at its final level.");
+      return;
+    }
     const actualCost = Math.ceil(xpGain / 4);
-    const newXp = devToolsEnabled ? xp + xpGain : Math.min(maxPassXp, xp + xpGain);
-    if (!devToolsEnabled) setCoins((current) => current - actualCost);
-    setXp(newXp);
+    if (!walletTransaction([
+      { kind: "spend", currency: "coins", amount: actualCost, reason: "xp-purchase-spend" },
+      { kind: "earn", currency: "xp", amount: xpGain, reason: "xp-purchase" },
+    ], "XP purchase blocked")) return;
+    const newXp = Math.min(maxPassXp, currentXp + xpGain);
     setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(passLevelForXp(newXp))])]);
     setNotice(`Purchased ${xpGain.toLocaleString()} XP for ${actualCost} coins.`);
   };
@@ -2089,8 +2189,8 @@ function App() {
       return;
     }
     const price = crate === "basic" ? 80 : 350;
-    if (!devToolsEnabled && coins < price) {
-      setNotice(`You need ${price - coins} more coins to open this crate.`);
+    if (!devToolsEnabled && walletRef.current.coins < price) {
+      setNotice(`You need ${price - walletRef.current.coins} more coins to open this crate.`);
       return;
     }
     const lockedColors = kitColors.filter((color) => !unlockedTeamColors.includes(color.id));
@@ -2114,7 +2214,18 @@ function App() {
       : null;
     const duplicateColor = !lockedColors.length;
     const bonusCoins = duplicateColor ? 25 : 0;
-    if (!devToolsEnabled) setCoins((current) => current - price + bonusCoins);
+    if (!devToolsEnabled) {
+      const crateTransactions: NewTransaction[] = [
+        { kind: "spend", currency: "coins", amount: price, reason: "crate-spend" },
+      ];
+      if (duplicateColor) {
+        crateTransactions.push({ kind: "earn", currency: "coins", amount: 25, reason: "duplicate-color" });
+      }
+      if (!playerReward && !formationReward) {
+        crateTransactions.push({ kind: "earn", currency: "coins", amount: 75, reason: "crate-bonus" });
+      }
+      if (!walletTransaction(crateTransactions, "Crate purchase blocked")) return;
+    }
     if (colorReward && !unlockedTeamColors.includes(colorReward.id)) {
       setUnlockedTeamColors((current) => [...current, colorReward.id]);
     }
@@ -2127,7 +2238,6 @@ function App() {
     const bonusLabel = playerReward
       ? `${playerReward.name} (${overallRating(playerReward)} OVR)`
       : formationReward ? `${formationReward.name} Formation` : "75 bonus coins";
-    if (!playerReward && !formationReward && !devToolsEnabled) setCoins((current) => current + 75);
     setCrateRevealed(false);
     setCrateReveal({
       crate,
@@ -2137,98 +2247,295 @@ function App() {
     });
   };
 
+  const readGuardFor = (installId: string): SaveGuard | null => {
+    const values: string[] = [];
+    try {
+      const local = window.localStorage.getItem(SAVE_STORAGE_KEYS.guard);
+      if (local) values.push(local);
+    } catch {
+      // Storage can be disabled; the save itself is still checked.
+    }
+    try {
+      const session = window.sessionStorage.getItem(SAVE_STORAGE_KEYS.guardSession);
+      if (session) values.push(session);
+    } catch {
+      // Session storage is optional; it only adds same-tab rollback detection.
+    }
+    return values
+      .map((raw) => decodeGuard(raw, INTEGRITY_KEY))
+      .flatMap((result) => result.ok ? [result.guard] : [])
+      .filter((guard) => guard.installId === installId)
+      .sort((left, right) => right.counter - left.counter)[0] ?? null;
+  };
+
+  const verifyProtectedSave = () => {
+    if (devToolsEnabled) {
+      setNotice("Developer mode does not write protected saves.");
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(SAVE_STORAGE_KEYS.primary)
+        ?? window.localStorage.getItem(SAVE_STORAGE_KEYS.mirror);
+      if (!raw) {
+        setNotice("No protected save has been written yet.");
+        return;
+      }
+      const decoded = decodeSave(raw, INTEGRITY_KEY, {
+        maxXp: maxPassXp,
+        progressionVersion: currentSaveVersion,
+      });
+      if (!decoded.ok) {
+        setSaveSecurity("reset");
+        setNotice(`Save verification failed: ${decoded.detail}`);
+        return;
+      }
+      const guardCheck = checkGuard(decoded.payload, decoded.digest, readGuardFor(decoded.payload.installId));
+      if (!guardCheck.ok) {
+        setSaveSecurity("reset");
+        setNotice(`Save verification failed: ${guardCheck.detail}`);
+        return;
+      }
+      setSaveSecurity("verified");
+      setNotice(`Save verified · ${decoded.payload.wallet.coins} coins · ${decoded.payload.wallet.xp.toLocaleString()} XP · ${decoded.payload.wallet.ledger.length} recent transactions.`);
+    } catch {
+      setNotice("Save verification could not read this browser's storage.");
+    }
+  };
+
   useEffect(() => {
     if (devToolsEnabled) {
       setSaveReady(true);
       return;
     }
+    const read = (key: string): string | null => {
+      try {
+        return window.localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    };
+    let data: SaveData | null = null;
+    let wallet: Wallet | null = null;
+    let mode: "signed" | "legacy" | "fresh" = "fresh";
+    let failure = "";
+    let clampedLegacy = false;
     try {
-      const saved = window.localStorage.getItem("blitz-league-save")
-        ?? window.localStorage.getItem("soccer-baseboard-save");
-      if (saved) {
-        const data = JSON.parse(saved) as { xp?: number; progressionVersion?: number; coins?: number; unlockedPlayers?: string[]; unlockedFormats?: FormatId[]; unlockedFormations?: FormationId[]; activeFormationId?: FormationId; formationAssignments?: Partial<Record<FormationId, Record<string, string>>>; unlockedTeamColors?: string[]; homeKitColorId?: string; awayKitColorId?: string; dailyOfferPurchases?: Record<string, boolean>; activeFormat?: FormatId; level?: number; aiDifficulty?: number; captionsEnabled?: boolean; captionSize?: CaptionSize; endTurnKey?: string | null; enterEndsTurn?: boolean; tutorialCompleted?: boolean };
-        if (data.progressionVersion !== currentSaveVersion) {
-          window.localStorage.removeItem("soccer-baseboard-save");
-          setNotice("Blitz League has started a fresh season. Your regular starting squad is ready.");
-          return;
+      const primaryRaw = read(SAVE_STORAGE_KEYS.primary);
+      const mirrorRaw = read(SAVE_STORAGE_KEYS.mirror);
+      const rawSaveCandidates = [primaryRaw, mirrorRaw]
+        .filter((raw): raw is string => !!raw && raw.trim().startsWith("AC1:"));
+      const decodedSignatures = rawSaveCandidates.map((raw) => decodeSave(raw, INTEGRITY_KEY, {
+        maxXp: maxPassXp,
+        progressionVersion: currentSaveVersion,
+      }));
+      const validSignatures = decodedSignatures
+        .flatMap((candidate) => candidate.ok ? [candidate] : [])
+        .sort((left, right) => right.payload.saveCounter - left.payload.saveCounter);
+      if (validSignatures.length) {
+        const chosen = validSignatures[0];
+        const guardCheck = checkGuard(chosen.payload, chosen.digest, readGuardFor(chosen.payload.installId));
+        if (!guardCheck.ok) {
+          failure = describeSaveFailure(guardCheck.code);
+        } else {
+          data = chosen.payload as unknown as SaveData;
+          wallet = chosen.payload.wallet;
+          mode = "signed";
+          installIdRef.current = chosen.payload.installId;
+          saveCounterRef.current = chosen.payload.saveCounter;
         }
-        const loadedXp = typeof data.xp === "number" && Number.isFinite(data.xp)
-          ? Math.max(0, Math.floor(data.xp))
-          : 0;
-        const passLevel = passLevelForXp(loadedXp);
-        const savedPlayers = Array.isArray(data.unlockedPlayers)
-          ? data.unlockedPlayers.filter((id) => roster.some((player) => player.id === id))
-          : [];
-        if (typeof data.xp === "number" && Number.isFinite(data.xp)) {
-          setXp(loadedXp);
-          setUnlockedPlayers([...new Set([...playersAvailableAt(passLevel), ...savedPlayers])]);
+      } else if (rawSaveCandidates.length) {
+        const firstFailure = decodedSignatures.find((candidate) => !candidate.ok);
+        failure = firstFailure && !firstFailure.ok
+          ? describeSaveFailure(firstFailure.code)
+          : "The protected save could not be verified.";
+      } else {
+        const legacyRaw = primaryRaw ?? read(SAVE_STORAGE_KEYS.legacy);
+        if (legacyRaw) {
+          const parsed = JSON.parse(legacyRaw) as SaveData;
+          if (parsed.progressionVersion !== currentSaveVersion) {
+            failure = "Blitz League has started a fresh season.";
+          } else {
+            const legacy = walletFromLegacy(parsed, { maxXp: maxPassXp });
+            wallet = legacy.wallet;
+            data = parsed;
+            mode = "legacy";
+            clampedLegacy = legacy.clampedCoins || legacy.clampedXp;
+            window.localStorage.removeItem(SAVE_STORAGE_KEYS.legacy);
+          }
         }
-        const savedFormats = Array.isArray(data.unlockedFormats)
-          ? data.unlockedFormats.filter((id): id is FormatId => formats.some((format) => format.id === id))
-          : [];
-        setUnlockedFormats([...new Set(["classic" as FormatId, ...savedFormats])]);
-        const savedFormations = Array.isArray(data.unlockedFormations)
-          ? data.unlockedFormations.filter((id): id is FormationId => formations.some((formation) => formation.id === id))
-          : [];
-        const ownedFormations = [...new Set([defaultFormation.id, ...savedFormations])];
-        setUnlockedFormations(ownedFormations);
-        if (typeof data.activeFormationId === "string" && ownedFormations.includes(data.activeFormationId as FormationId)) {
-          setActiveFormationId(data.activeFormationId as FormationId);
-        }
-        if (data.formationAssignments && typeof data.formationAssignments === "object") {
-          const validAssignments: Partial<Record<FormationId, Record<string, string>>> = {};
-          formations.forEach((formation) => {
-            const assignments = data.formationAssignments?.[formation.id];
-            if (!assignments || typeof assignments !== "object") return;
-            const validSlots = Object.fromEntries(Object.entries(assignments).filter(([slotId, playerId]) =>
-              formation.slots.some((slot) => slot.id === slotId)
-              && roster.some((player) => player.id === playerId)));
-            validAssignments[formation.id] = validSlots;
-          });
-          setFormationAssignments(validAssignments);
-        }
-        const savedColors = Array.isArray(data.unlockedTeamColors)
-          ? data.unlockedTeamColors.filter((id) => kitColors.some((color) => color.id === id))
-          : [];
-        const ownedColors = [...new Set(["lime", "coral", ...savedColors])];
-        setUnlockedTeamColors(ownedColors);
-        if (typeof data.homeKitColorId === "string" && ownedColors.includes(data.homeKitColorId)) {
-          setHomeKitColorId(data.homeKitColorId);
-        }
-        if (typeof data.awayKitColorId === "string" && ownedColors.includes(data.awayKitColorId)) {
-          setAwayKitColorId(data.awayKitColorId);
-        }
-        if (data.dailyOfferPurchases && typeof data.dailyOfferPurchases === "object") {
-          setDailyOfferPurchases(data.dailyOfferPurchases);
-        }
-        if (typeof data.coins === "number") setCoins(data.coins);
-        if (data.activeFormat && formats.some((f) => f.id === data.activeFormat
-          && (f.unlock <= passLevel || savedFormats.includes(f.id)))) setActiveFormat(data.activeFormat);
-        if (typeof data.level === "number") setLevel(data.level);
-        if (typeof data.aiDifficulty === "number" && Number.isFinite(data.aiDifficulty)) {
-          setAiDifficulty(cap(Math.round(data.aiDifficulty), 1, 100));
-        }
-        if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
-        if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
-        if (typeof data.tutorialCompleted === "boolean") setTutorialCompleted(data.tutorialCompleted);
-        if (typeof data.endTurnKey === "string" || data.endTurnKey === null) setEndTurnKey(data.endTurnKey);
-        else if (data.enterEndsTurn === false) setEndTurnKey(null);
       }
     } catch {
-      setNotice("Could not load saved progress. You can still play; progress will save again.");
-    } finally {
-      setSaveReady(true);
+      failure = "The saved progress could not be read.";
     }
+
+    if (!wallet || !data || failure) {
+      walletRef.current = createWallet();
+      installIdRef.current = createInstallId();
+      saveCounterRef.current = 0;
+      setCoins(STARTING_COINS);
+      setXp(0);
+      setSaveSecurity(failure ? "reset" : "checking");
+      if (failure) {
+        setNotice(`${failure} Save protection started a fresh, verified save.`);
+      }
+      setSaveReady(true);
+      return;
+    }
+
+    walletRef.current = wallet;
+    if (mode !== "signed") {
+      installIdRef.current = createInstallId();
+      saveCounterRef.current = 0;
+    }
+    setCoins(wallet.coins);
+    setXp(wallet.xp);
+    setSaveSecurity(mode === "signed" ? "verified" : "migrated");
+
+    const loadedXp = wallet.xp;
+    const passLevel = passLevelForXp(loadedXp);
+    const savedPlayers = Array.isArray(data.unlockedPlayers)
+      ? data.unlockedPlayers.filter((id) => roster.some((player) => player.id === id))
+      : [];
+    setUnlockedPlayers([...new Set([...playersAvailableAt(passLevel), ...savedPlayers])]);
+    const savedFormats = Array.isArray(data.unlockedFormats)
+      ? data.unlockedFormats.filter((id): id is FormatId => formats.some((format) => format.id === id))
+      : [];
+    setUnlockedFormats([...new Set(["classic" as FormatId, ...savedFormats])]);
+    const savedFormations = Array.isArray(data.unlockedFormations)
+      ? data.unlockedFormations.filter((id): id is FormationId => formations.some((formation) => formation.id === id))
+      : [];
+    const ownedFormations = [...new Set([defaultFormation.id, ...savedFormations])];
+    setUnlockedFormations(ownedFormations);
+    if (typeof data.activeFormationId === "string" && ownedFormations.includes(data.activeFormationId as FormationId)) {
+      setActiveFormationId(data.activeFormationId as FormationId);
+    }
+    if (data.formationAssignments && typeof data.formationAssignments === "object") {
+      const validAssignments: Partial<Record<FormationId, Record<string, string>>> = {};
+      formations.forEach((formation) => {
+        const assignments = data.formationAssignments?.[formation.id];
+        if (!assignments || typeof assignments !== "object") return;
+        const validSlots = Object.fromEntries(Object.entries(assignments).filter(([slotId, playerId]) =>
+          formation.slots.some((slot) => slot.id === slotId)
+          && roster.some((player) => player.id === playerId)));
+        validAssignments[formation.id] = validSlots;
+      });
+      setFormationAssignments(validAssignments);
+    }
+    const savedColors = Array.isArray(data.unlockedTeamColors)
+      ? data.unlockedTeamColors.filter((id) => kitColors.some((color) => color.id === id))
+      : [];
+    const ownedColors = [...new Set(["lime", "coral", ...savedColors])];
+    setUnlockedTeamColors(ownedColors);
+    if (typeof data.homeKitColorId === "string" && ownedColors.includes(data.homeKitColorId)) {
+      setHomeKitColorId(data.homeKitColorId);
+    }
+    if (typeof data.awayKitColorId === "string" && ownedColors.includes(data.awayKitColorId)) {
+      setAwayKitColorId(data.awayKitColorId);
+    }
+    if (data.dailyOfferPurchases && typeof data.dailyOfferPurchases === "object") {
+      const validOffers: Record<string, boolean> = {};
+      Object.entries(data.dailyOfferPurchases).forEach(([key, value]) => {
+        if (value !== true) return;
+        const separator = key.indexOf(":");
+        const playerId = separator > 0 ? key.slice(separator + 1) : "";
+        if (playerId && roster.some((player) => player.id === playerId)) validOffers[key] = true;
+      });
+      setDailyOfferPurchases(validOffers);
+    }
+    if (data.activeFormat && formats.some((format) => format.id === data.activeFormat
+      && (format.unlock <= passLevel || savedFormats.includes(format.id)))) setActiveFormat(data.activeFormat);
+    if (typeof data.level === "number" && Number.isFinite(data.level)) {
+      setLevel(cap(Math.round(data.level), 1, campaignStageCount));
+    }
+    if (typeof data.aiDifficulty === "number" && Number.isFinite(data.aiDifficulty)) {
+      setAiDifficulty(cap(Math.round(data.aiDifficulty), 1, 100));
+    }
+    if (typeof data.captionsEnabled === "boolean") setCaptionsEnabled(data.captionsEnabled);
+    if (data.captionSize && ["small", "medium", "large"].includes(data.captionSize)) setCaptionSize(data.captionSize);
+    if (typeof data.tutorialCompleted === "boolean") setTutorialCompleted(data.tutorialCompleted);
+    if (typeof data.endTurnKey === "string" || data.endTurnKey === null) setEndTurnKey(data.endTurnKey);
+    else if (data.enterEndsTurn === false) setEndTurnKey(null);
+    if (mode === "legacy") {
+      setNotice(clampedLegacy
+        ? "Progress upgraded and protected. Legacy coin or XP balances above the verified ceiling were clamped."
+        : "Progress upgraded to a signed, protected save.");
+    }
+    setSaveReady(true);
   }, []);
 
   useEffect(() => {
     if (!saveReady || devToolsEnabled) return;
-    window.localStorage.setItem("blitz-league-save", JSON.stringify({
-      xp, progressionVersion: currentSaveVersion, coins, unlockedPlayers, unlockedFormats, unlockedFormations,
-      activeFormationId, formationAssignments, unlockedTeamColors, homeKitColorId, awayKitColorId,
-      dailyOfferPurchases, activeFormat, level, aiDifficulty,
-      captionsEnabled, captionSize, endTurnKey, tutorialCompleted,
-    }));
+    const wallet = walletRef.current;
+    const walletValidation = validateWallet(wallet, { maxXp: maxPassXp, key: keyForCurrentInstall() });
+    if (!walletValidation.ok) {
+      const fresh = createWallet();
+      walletRef.current = fresh;
+      setCoins(fresh.coins);
+      setXp(fresh.xp);
+      setSaveSecurity("reset");
+      setNotice(`Save protection blocked an invalid wallet (${walletValidation.issue.code}) and restored the starting balance.`);
+      return;
+    }
+    if (!installIdRef.current) installIdRef.current = createInstallId();
+    const counter = Math.max(1, saveCounterRef.current + 1);
+    saveCounterRef.current = counter;
+    const payload: SavePayload = {
+      securityVersion: SECURITY_VERSION,
+      progressionVersion: currentSaveVersion,
+      saveCounter: counter,
+      savedAt: Date.now(),
+      installId: installIdRef.current,
+      wallet,
+      xp: wallet.xp,
+      coins: wallet.coins,
+      unlockedPlayers,
+      unlockedFormats,
+      unlockedFormations,
+      activeFormationId,
+      formationAssignments,
+      unlockedTeamColors,
+      homeKitColorId,
+      awayKitColorId,
+      dailyOfferPurchases,
+      activeFormat,
+      level,
+      aiDifficulty,
+      captionsEnabled,
+      captionSize,
+      endTurnKey,
+      tutorialCompleted,
+    };
+    try {
+      const encoded = encodeSave(payload, INTEGRITY_KEY);
+      const guard: SaveGuard = {
+        installId: installIdRef.current,
+        counter,
+        digest: sha256Hex(encoded),
+        savedAt: payload.savedAt,
+      };
+      const write = (key: string, value: string): boolean => {
+        try {
+          window.localStorage.setItem(key, value);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const wroteMirror = write(SAVE_STORAGE_KEYS.mirror, encoded);
+      const wrotePrimary = write(SAVE_STORAGE_KEYS.primary, encoded);
+      if (wroteMirror || wrotePrimary) {
+        const encodedGuard = encodeGuard(guard, INTEGRITY_KEY);
+        write(SAVE_STORAGE_KEYS.guard, encodedGuard);
+        try {
+          window.sessionStorage.setItem(SAVE_STORAGE_KEYS.guardSession, encodedGuard);
+        } catch {
+          // Same-tab rollback detection is optional.
+        }
+        setSaveSecurity((current) => current === "migrated" ? current : "verified");
+      }
+    } catch {
+      setNotice("Save protection could not write progress to this browser. The current session is still playable.");
+    }
   }, [xp, coins, unlockedPlayers, unlockedFormats, unlockedTeamColors, homeKitColorId, awayKitColorId,
     unlockedFormations, activeFormationId, formationAssignments, dailyOfferPurchases, activeFormat, level, aiDifficulty,
     captionsEnabled, captionSize, endTurnKey, tutorialCompleted, saveReady, devToolsEnabled]);
@@ -2395,12 +2702,19 @@ function App() {
     setPitchFx(null);
     setTutorialComplete(true);
     if (tutorialCompleted) return;
+    const currentXp = devToolsEnabled ? xp : walletRef.current.xp;
+    const xpGain = devToolsEnabled ? 150 : Math.min(150, Math.max(0, maxPassXp - currentXp));
+    const tutorialTransactions: NewTransaction[] = [
+      { kind: "earn", currency: "coins", amount: 50, reason: "tutorial-coins" },
+    ];
+    if (xpGain > 0) {
+      tutorialTransactions.unshift({ kind: "earn", currency: "xp", amount: xpGain, reason: "tutorial-xp" });
+    }
+    if (!walletTransaction(tutorialTransactions, "Tutorial reward blocked")) return;
     setTutorialCompleted(true);
-    setXp((value) => value + 150);
-    setCoins((value) => value + 50);
-    const nextPassLevel = passLevelForXp(xp + 150);
+    const nextPassLevel = passLevelForXp(currentXp + xpGain);
     setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(nextPassLevel)])]);
-    setNotice("Tutorial complete · +150 XP · +50 coins");
+    setNotice(`Tutorial complete · +${xpGain} XP · +50 coins`);
   }
 
   function stopQuickplay() {
@@ -3050,9 +3364,18 @@ function App() {
             history: [...run.history, { game: gameNumber, enemyAbility: state.rushAwayAbility ?? "", scored: state.score[0], conceded: state.score[1], won: true }],
           });
         }
-        setXp((value) => value + xpGain);
-        setCoins((value) => value + coinGain);
-        setNotice(`League Rush game won · +${xpGain} XP · +${coinGain} coins`);
+        const currentXp = devToolsEnabled ? xp : walletRef.current.xp;
+        const actualXpGain = devToolsEnabled ? xpGain : Math.min(xpGain, Math.max(0, maxPassXp - currentXp));
+        if (state.rewardClaimed !== true) {
+          const rushTransactions: NewTransaction[] = [
+            { kind: "earn", currency: "coins", amount: coinGain, reason: "rush-coins" },
+          ];
+          if (actualXpGain > 0) {
+            rushTransactions.unshift({ kind: "earn", currency: "xp", amount: actualXpGain, reason: "rush-xp" });
+          }
+          walletTransaction(rushTransactions, "League Rush reward blocked");
+          setNotice(`League Rush game won · +${actualXpGain} XP · +${coinGain} coins`);
+        }
         setPassMode(false);
         setScreen("rush");
         return {
@@ -3063,6 +3386,7 @@ function App() {
           bonusDrives: 0,
           bonusActions: 0,
           finished: true,
+          rewardClaimed: true,
           message: `Game won ${state.score[0]}–${state.score[1]} · run continues.`,
         };
       }
@@ -3117,21 +3441,38 @@ function App() {
         : tied
           ? `Full time! The match ends level at ${state.score[0]}–${state.score[1]}.`
           : `${fullTime ? "Full time!" : "Match over."} The opposition wins ${state.score[0]}–${state.score[1]}.`;
-      if (won) {
-        const nextXp = xp + xpReward;
+      if (won && state.rewardClaimed !== true) {
+        const currentXp = devToolsEnabled ? xp : walletRef.current.xp;
+        const actualXpGain = devToolsEnabled ? xpReward : Math.min(xpReward, Math.max(0, maxPassXp - currentXp));
+        const nextXp = currentXp + actualXpGain;
         const nextPassLevel = passLevelForXp(nextXp);
-        setXp(nextXp);
-        setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(nextPassLevel)])]);
+        const victoryTransactions: NewTransaction[] = [];
+        if (actualXpGain > 0) {
+          victoryTransactions.push({ kind: "earn", currency: "xp", amount: actualXpGain, reason: "match-xp" });
+        }
         if (quickplayMode === null) {
           if (state.campaignStage === level) setLevel((value) => value + 1);
-          setCoins((value) => value + 30 + state.campaignStage * 5);
+          victoryTransactions.push({
+            kind: "earn",
+            currency: "coins",
+            amount: 30 + state.campaignStage * 5,
+            reason: "match-coins",
+          });
         }
-        if (battlePassLevel < coins250Level && nextPassLevel >= coins250Level) setCoins((value) => value + 250);
-        if (battlePassLevel < coins500Level && nextPassLevel >= coins500Level) setCoins((value) => value + 500);
+        if (battlePassLevel < coins250Level && nextPassLevel >= coins250Level) {
+          victoryTransactions.push({ kind: "earn", currency: "coins", amount: 250, reason: "pass-coins" });
+        }
+        if (battlePassLevel < coins500Level && nextPassLevel >= coins500Level) {
+          victoryTransactions.push({ kind: "earn", currency: "coins", amount: 500, reason: "pass-coins" });
+        }
+        if (victoryTransactions.length) {
+          walletTransaction(victoryTransactions, "Match reward blocked");
+        }
+        setUnlockedPlayers((current) => [...new Set([...current, ...playersAvailableAt(nextPassLevel)])]);
       }
       setPassMode(false);
       setScreen("victory");
-      return { ...state, turn: "home", drivesUsed: 0, actionsUsed: 0, bonusDrives: 0, bonusActions: 0, finished: true };
+      return { ...state, turn: "home", drivesUsed: 0, actionsUsed: 0, bonusDrives: 0, bonusActions: 0, finished: true, rewardClaimed: true };
     }
     return { ...state, turn: "home", drivesUsed: 0, actionsUsed: 0, bonusDrives: 0, bonusActions: 0, message: "The opposition scores. Your turn." };
   }
@@ -3823,7 +4164,7 @@ function App() {
         .online-setup{max-width:none;margin-top:18px}.online-setup>input{display:block;width:100%;margin-top:8px}.online-room-actions{display:grid;grid-template-columns:1fr minmax(130px,.7fr) auto;gap:9px;align-items:end;margin-top:15px}.online-room-actions input{min-width:0}.online-setup-link{display:inline-block;margin-top:12px;color:#8ff2c8;font-size:10px}
         .pass-page{margin-top:26px}.pass-banner{background:linear-gradient(100deg,#183a2f,#12241d);border:1px solid #8ff2c820;border-radius:14px;padding:24px;margin:21px 0}.pass-banner h2{font-size:18px;margin:0}.pass-banner p{font-size:11px;color:#9db3aa}.pass-levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.level-card{background:#101c18;border:1px solid #ffffff12;border-radius:11px;padding:15px}.level-card h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 9px}.level-card b{font-size:12px}.level-card p{font-size:10px;color:#94a9a1;min-height:26px}.level-card.player-reward{display:flex;flex-direction:column;min-height:160px}.level-card.player-reward .player-avatar{margin-bottom:10px}.victory-page{max-width:900px;margin:70px auto;background:linear-gradient(145deg,#163026,#101c18);border:1px solid #8ff2c866;border-radius:20px;padding:clamp(24px,6vw,58px);text-align:center;box-shadow:0 22px 90px #0008}.victory-page .victory-icon{font-size:50px}.victory-page h1{margin-top:14px}.victory-score{font:700 clamp(38px,7vw,68px) 'DM Mono',monospace;color:#b9ffe4;letter-spacing:.08em;margin:24px 0}.victory-page p{color:#aebfb6;line-height:1.7}.victory-reward{display:inline-block;margin:12px 0 24px;padding:11px 16px;border:1px solid #8ff2c844;border-radius:9px;color:#b9ffe4;font:12px 'DM Mono',monospace}.victory-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:18px}
         .campaign-page{padding-top:38px}.campaign-levels{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:11px;margin:24px 0}.campaign-level{min-height:145px;background:#101c18;border:1px solid #ffffff14;border-radius:12px;padding:15px;text-align:left}.campaign-level.available{border-color:#8ff2c855}.campaign-level.locked{opacity:.52;cursor:not-allowed}.campaign-level h3{font:11px 'DM Mono',monospace;color:#8ff2c8;margin:0 0 11px}.campaign-level strong{font-size:13px}.campaign-level p{font-size:10px;color:#94a9a1;margin:7px 0 12px}.campaign-level .badge{display:inline-block}
-        .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#93a9a0;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#8ff2c818;border-color:#8ff2c875;color:#8ff2c8}.switch-btn{min-width:76px}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0b1512}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}.match-fullscreen .pitch{width:100%;transform:none!important}
+        .settings-page{padding-top:40px}.settings-card{max-width:760px;margin-top:24px;background:#101c18;border:1px solid #ffffff12;border-radius:14px;padding:22px}.setting-row{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:16px 0;border-bottom:1px solid #ffffff12}.setting-row:last-child{border-bottom:0}.setting-copy strong{display:block;font-size:13px}.setting-copy small{display:block;color:#93a9a0;font-size:10px;line-height:1.6;margin-top:5px}.setting-options{display:flex;gap:7px;flex-wrap:wrap}.setting-options button{background:#ffffff0b;border:1px solid #ffffff18;border-radius:8px;padding:9px 12px;font-size:10px}.setting-options button.active{background:#8ff2c818;border-color:#8ff2c875;color:#8ff2c8}.switch-btn{min-width:76px}.security-badge{display:inline-flex;align-items:center;border:1px solid #8ff2c866;border-radius:999px;padding:8px 12px;background:#8ff2c814;color:#b9ffe4;font:10px 'DM Mono',monospace;letter-spacing:.08em}.security-badge.reset{border-color:#ec695e88;background:#ec695e14;color:#ffb4ad}.security-badge.migrated{border-color:#f2c84b88;background:#f2c84b12;color:#f8dfa0}.security-badge.dev{border-color:#a68af688;background:#a68af614;color:#d9ccff}.security-badge.checking{opacity:.65}.game-caption{position:absolute;z-index:6;left:50%;bottom:16px;transform:translateX(-50%);width:max-content;max-width:85%;padding:8px 13px;border:1px solid #ffffff35;border-radius:8px;background:#101713e8;color:#fff;text-align:center;line-height:1.45;box-shadow:0 5px 16px #0007;pointer-events:none}.game-caption.small{font-size:15px}.game-caption.medium{font-size:19.5px}.game-caption.large{font-size:24px}.match-fullscreen{position:fixed;inset:0;z-index:20;overflow:auto;padding:0 22px 18px;background:#0b1512}.match-fullscreen .topbar{display:none}.match-fullscreen .match-layout{max-width:none;min-height:100vh;padding-top:18px;grid-template-columns:minmax(0,1fr) 300px;align-items:center}.match-fullscreen .pitch-viewport{width:100%}.match-fullscreen .pitch-wrap{padding:14px}.match-fullscreen .pitch{width:100%;transform:none!important}
         .toast{position:fixed;right:24px;bottom:23px;background:#c9ffe9;color:#0a241c;padding:12px 17px;border-radius:9px;font-size:11px;font-weight:700;box-shadow:0 10px 40px #0008;z-index:9}
         @media(max-width:850px){.app-shell{padding:0 16px 35px}.hero{padding-top:37px;align-items:start;flex-direction:column}.home-grid{grid-template-columns:1fr}.match-layout{grid-template-columns:1fr}.sidebar{display:grid;grid-template-columns:1fr 1fr}.nav{gap:0}.nav button{padding:9px 8px;font-size:10px}.wallet{font-size:10px}.topbar{gap:8px}.pitch-wrap{padding:7px}.format-grid{grid-template-columns:1fr}.quickplay-options{grid-template-columns:1fr}.rush-teaser{flex-direction:column;align-items:flex-start}.rush-run-hud{grid-template-columns:1fr 1fr}.rush-grid{grid-template-columns:1fr}.rush-results{grid-template-columns:1fr 1fr}.rush-hud{grid-template-columns:1fr 1fr}.match-fullscreen{padding:0 12px 14px}.match-fullscreen .match-layout{grid-template-columns:1fr;align-items:start;padding-top:12px}.match-fullscreen .pitch-wrap{padding:7px}}
         @media(max-width:520px){.brand{font-size:12px}.brand small{font-size:7px}.brand-mark{width:29px;height:29px}.nav button{font-size:9px;padding:8px 6px}.wallet .xp-pill{display:none}.sidebar{grid-template-columns:1fr}.hero-cta{width:100%}.hero-cta button{flex:1}.player-list{grid-template-columns:1fr 1fr}.match-top{gap:8px}.match-top .ghost-btn{padding:7px}.pitch-wrap{padding:4px}.cell{border-width:0 1px 1px 0}.setting-row{align-items:flex-start;flex-direction:column}.online-room-actions{grid-template-columns:1fr}.match-fullscreen{padding:0 6px 10px}.match-fullscreen .pitch-wrap{padding:4px}}
@@ -4049,6 +4390,30 @@ function App() {
               </button>
               <button className="switch-btn" onClick={() => { setEndTurnKey(null); setCapturingEndTurnKey(false); }}>UNBIND</button>
             </div>
+          </div>
+        </section>
+        <section className="settings-card" style={{ marginTop: 18 }}>
+          <div className="panel-heading"><h2>Save protection</h2><span>Anti-cheat</span></div>
+          <div className="setting-row">
+            <div className="setting-copy">
+              <strong>{saveSecurity === "dev"
+                ? "Developer mode · save protection bypassed"
+                : saveSecurity === "migrated"
+                  ? "Protected save · legacy progress migrated"
+                  : saveSecurity === "reset"
+                    ? "Protected save · integrity reset"
+                    : saveSecurity === "checking"
+                      ? "Checking protected save…"
+                      : "Protected save · verified"}</strong>
+              <small>Signed saves, a transaction ledger with replay checks, hard balance ceilings, and a rollback guard. Editing browser storage or restoring an older save is rejected. The public build has no dev-tool economy bypass.</small>
+            </div>
+            <div className="setting-options">
+              <span className={`security-badge ${saveSecurity}`}>{saveSecurity === "dev" ? "DEV" : saveSecurity === "reset" ? "RESET" : saveSecurity === "migrated" ? "MIGRATED" : "PROTECTED"}</span>
+              <button className="switch-btn" onClick={verifyProtectedSave}>VERIFY SAVE</button>
+            </div>
+          </div>
+          <div className="setting-row">
+            <div className="setting-copy"><strong>Local-only limitation</strong><small>Because Blitz League is open source and stores progress in this browser, client-side protection stops casual editing and save rollbacks. A server-authoritative account is required to stop someone who modifies the game code itself.</small></div>
           </div>
         </section>
       </div>}
